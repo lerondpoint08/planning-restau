@@ -1,0 +1,15 @@
+{
+  "name": "Planning Restau",
+  "short_name": "Planning Restau",
+  "description": "Garde les restos repérés sur TikTok et Insta et planifie tes sorties.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F2F5F1",
+  "theme_color": "#1E6B4E",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Planning Restau</title>
+<meta name="description" content="Garde les restos repérés sur TikTok et Insta et planifie tes sorties.">
+<meta name="theme-color" content="#F2F5F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0F1612" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Planning Restau">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="top-row">
+      <h1>Planning Restau</h1>
+      <div id="userBox"></div>
+    </div>
+    <p class="summary" id="summary">Chargement…</p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" id="tab-decouvrir" role="tab" aria-selected="true">Découvrir</button>
+    <button class="tab" id="tab-liste" role="tab" aria-selected="false">Mes restos</button>
+    <button class="tab" id="tab-plan" role="tab" aria-selected="false">Planning</button>
+  </nav>
+
+  <main>
+    <section id="view-decouvrir">
+      <div class="welcome" id="welcome" hidden>
+        <h2>Bienvenue</h2>
+        <ol>
+          <li>Choisis des restos dans Découvrir, ou colle le lien d’un post dans Mes restos.</li>
+          <li>Planifie une sortie dans le Planning.</li>
+          <li>Ajoute-la à ton agenda en un geste.</li>
+        </ol>
+        <button type="button" class="btn primary" id="welcomeOk">Compris</button>
+      </div>
+      <div class="seg" id="seg-sub" role="group" aria-label="Catalogue">
+        <button type="button" data-sub="restos" aria-pressed="true" id="sub-restos">Restos</button>
+        <button type="button" data-sub="createurs" aria-pressed="false" id="sub-createurs">Créateurs</button>
+      </div>
+
+      <div id="d-restos">
+        <div id="topBox"></div>
+        <label class="search"><input id="cq" type="search" placeholder="Nom, ville, cuisine…" aria-label="Chercher dans le catalogue" autocomplete="off"></label>
+        <div class="chips" id="cchips"></div>
+        <div class="list" id="catOut"></div>
+        <p class="foot-link" id="catFoot" hidden><button type="button" class="btn ghost" id="catExRemove">Supprimer les exemples du catalogue</button></p>
+      </div>
+
+      <div id="d-createurs" hidden>
+        <div id="crBar"></div>
+        <div class="list" id="crOut"></div>
+      </div>
+    </section>
+
+    <section id="view-liste" hidden>
+      <div class="seg" id="seg-statut" role="group" aria-label="Statut">
+        <button type="button" data-statut="atester" aria-pressed="true" id="seg-atester">À tester</button>
+        <button type="button" data-statut="teste" aria-pressed="false" id="seg-teste">Testés</button>
+      </div>
+      <label class="search"><input id="q" type="search" placeholder="Nom, ville, cuisine…" aria-label="Rechercher un resto" autocomplete="off"></label>
+      <div class="chips" id="chips"></div>
+      <div class="list" id="listOut"></div>
+      <p class="foot-link" id="exFoot" hidden><button type="button" class="btn ghost" id="exRemove">Supprimer les restos d’exemple</button></p>
+    </section>
+
+    <section id="view-plan" hidden>
+      <div class="seg" id="seg-plan" role="group" aria-label="Affichage du planning">
+        <button type="button" data-pv="semaine" aria-pressed="true" id="pv-semaine">Semaine</button>
+        <button type="button" data-pv="avenir" aria-pressed="false" id="pv-avenir">À venir</button>
+      </div>
+      <div class="weekbar" id="weekbar">
+        <button type="button" class="icon-btn" id="wk-prev" aria-label="Semaine précédente">‹</button>
+        <div class="weekbar-label" id="wk-label"></div>
+        <button type="button" class="icon-btn" id="wk-next" aria-label="Semaine suivante">›</button>
+      </div>
+      <div class="list" id="planOut"></div>
+    </section>
+  </main>
+</div>
+
+<button type="button" class="fab" id="fab">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+  <span id="fabLabel">Ajouter un resto</span>
+</button>
+
+<div class="overlay" id="ov" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <h2 id="sheetTitle"></h2>
+      <button type="button" class="icon-btn" id="sheetClose" aria-label="Fermer">×</button>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
