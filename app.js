@@ -214,7 +214,11 @@
         const r = await sb.auth.resetPasswordForEmail(m, { redirectTo: location.origin + location.pathname });
         err.textContent = r.error ? 'Envoi impossible pour le moment. Réessaie dans quelques minutes.' : 'Si ce compte existe, un e-mail de réinitialisation vient de partir.';
       } });
-      return [form, forgot, swap];
+      const google = el('button', { type: 'button', class: 'btn big', text: 'Continuer avec Google', onclick: async () => {
+        const r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
+        if (r.error) err.textContent = 'Connexion Google indisponible pour le moment.';
+      } });
+      return [google, el('p', { class: 'meta', text: 'ou avec ton e-mail' }), form, forgot, swap];
     }
     body.append(...build());
     openSheet(signup ? 'Créer un compte' : 'Connexion', body, 'input[name="email"]');
