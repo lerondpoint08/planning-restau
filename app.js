@@ -804,7 +804,8 @@
       box.append(el('button', { type: 'button', class: 'btn ghost who', text: S.isAdmin ? 'Admin' : (S.user.email || '').split('@')[0], onclick: openAccount }),
         el('button', { type: 'button', class: 'btn ghost', text: 'Quitter', onclick: async () => { await sb.auth.signOut(); toast('Déconnecté'); } }));
     } else if (S.ready) {
-      box.append(el('button', { type: 'button', class: 'btn primary', text: 'Connexion', onclick: () => openAuth('login') }));
+      box.append(el('button', { type: 'button', class: 'btn ghost', text: 'Connexion', onclick: () => openAuth('login') }),
+        el('button', { type: 'button', class: 'btn primary', text: 'S’inscrire', onclick: () => openAuth('signup') }));
     }
   }
   function renderChrome() {
@@ -817,6 +818,7 @@
     ['decouvrir', 'liste', 'plan', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
     $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
+    $('welcomeSignup').hidden = !!S.user;
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
     const fabMode = (S.tab === 'admin' || S.tab === 'news') ? '' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
@@ -850,6 +852,7 @@
   $('cq').addEventListener('input', (e) => { S.cq = e.target.value; renderCatalogue(); });
   $('exRemove').addEventListener('click', removeExamples);
   $('catExRemove').addEventListener('click', removeCatalogueExamples);
+  $('welcomeSignup').addEventListener('click', () => openAuth('signup'));
   $('welcomeOk').addEventListener('click', () => { welcomeOff = true; try { localStorage.setItem('pr-welcome', '1'); } catch (e) { /* ignoré */ } $('welcome').hidden = true; });
   $('fab').addEventListener('click', () => {
     const m = $('fab').dataset.mode;
