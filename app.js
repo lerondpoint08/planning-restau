@@ -188,20 +188,33 @@
         e.preventDefault(); err.textContent = ''; submit.disabled = true;
         try {
           const creds = { email: email.value.trim(), password: pass.value };
-          const res = signup ? await sb.auth.signUp(creds) : await sb.auth.signInWithPassword(creds);
+          const res = signup ? await sb.auth.signUp({ ...creds, options: { emailRedirectTo: location.origin + location.pathname } }) : await sb.auth.signInWithPassword(creds);
           if (res.error) throw res.error;
-          if (signup && !res.data.session) { err.textContent = 'Compte créé, mais une confirmation par e-mail est demandée. Contacte l’administrateur du site.'; submit.disabled = false; return; }
+          if (signup && !res.data.session) {
+            body.replaceChildren(el('p', { class: 'meta', text: 'Compte créé. Un e-mail de confirmation vient de partir vers ' + creds.email + '. Clique sur le lien qu’il contient (pense à regarder les courriers indésirables), puis reviens te connecter.' }),
+              el('button', { type: 'button', class: 'btn primary big', text: 'Compris', onclick: closeSheet }));
+            return;
+          }
+          if (!signup) sb.rpc('log_connexion').then(() => {}, () => {});
           closeSheet(); toast(signup ? 'Compte créé, bienvenue !' : 'Connecté');
         } catch (x) {
           err.textContent = /invalid login/i.test(x.message || '') ? 'E-mail ou mot de passe incorrect.'
             : /already registered|already been registered/i.test(x.message || '') ? 'Cet e-mail a déjà un compte : connecte-toi.'
+            : /not confirmed/i.test(x.message || '') ? 'Confirme d’abord ton e-mail : clique sur le lien reçu par courrier.'
+            : /rate limit|too many/i.test(x.message || '') ? 'Trop d’essais. Réessaie dans quelques minutes.'
             : /password/i.test(x.message || '') ? 'Mot de passe trop court (6 caractères minimum).'
             : 'Connexion impossible. Réessaie dans un instant.';
           submit.disabled = false;
         }
       });
       const swap = el('button', { type: 'button', class: 'btn ghost', text: signup ? 'J’ai déjà un compte' : 'Créer un compte', onclick: () => { signup = !signup; $('sheetTitle').textContent = signup ? 'Créer un compte' : 'Connexion'; body.replaceChildren(...build()); } });
-      return [form, swap];
+      const forgot = signup ? null : el('button', { type: 'button', class: 'btn ghost', text: 'Mot de passe oublié', onclick: async () => {
+        const m = email.value.trim();
+        if (!m) { err.textContent = 'Saisis ton e-mail ci-dessus, puis reclique.'; return; }
+        const r = await sb.auth.resetPasswordForEmail(m, { redirectTo: location.origin + location.pathname });
+        err.textContent = r.error ? 'Envoi impossible pour le moment. Réessaie dans quelques minutes.' : 'Si ce compte existe, un e-mail de réinitialisation vient de partir.';
+      } });
+      return [form, forgot, swap];
     }
     body.append(...build());
     openSheet(signup ? 'Créer un compte' : 'Connexion', body, 'input[name="email"]');
@@ -210,6 +223,67 @@
     if (S.user) return false;
     openAuth('login', why || 'Connecte-toi pour continuer.');
     return true;
+  }
+
+  function openNewPassword() {
+    const err = el('p', { class: 'err', role: 'alert' });
+    const pass = inp('password', { type: 'password', req: true, min: 6, ac: 'new-password', ph: '6 caractères minimum' });
+    const form = el('form', {}, field('Nouveau mot de passe', pass), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Enregistrer' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await sb.auth.updateUser({ password: pass.value });
+      if (r.error) { err.textContent = 'Mot de passe refusé (6 caractères minimum).'; return; }
+      closeSheet(); toast('Mot de passe changé');
+    });
+    openSheet('Nouveau mot de passe', form, 'input[name="password"]');
+  }
+  function openAccount() {
+    const del = armedButton('Supprimer mon compte et mes données', 'Confirmer la suppression définitive ?', async () => {
+      const r = await sb.rpc('supprimer_mon_compte');
+      if (r.error) { toast('Suppression impossible'); return; }
+      await sb.auth.signOut(); closeSheet(); toast('Compte supprimé');
+    });
+    openSheet('Mon compte', el('div', { class: 'stack' },
+      el('p', { class: 'meta', text: S.user.email }),
+      el('button', { type: 'button', class: 'btn', text: 'Changer mon mot de passe', onclick: openNewPassword }),
+      el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Elle est définitive.' }), del));
+  }
+  function openReport(c) {
+    if (needLogin('Connecte-toi pour signaler une fiche.')) return;
+    const err = el('p', { class: 'err', role: 'alert' });
+    const motif = el('textarea', { name: 'motif', rows: '3', maxlength: '500', required: true, placeholder: 'Ex. adresse fausse, resto fermé, demande de retrait…' });
+    const form = el('form', {}, el('p', { class: 'meta', text: c.nom }), field('Motif', motif), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer le signalement' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await sb.from('signalements').insert({ resto_id: c.id, motif: motif.value.trim() });
+      if (r.error) { err.textContent = 'Envoi impossible (3 caractères minimum).'; return; }
+      closeSheet(); toast('Signalement envoyé, merci');
+    });
+    openSheet('Signaler une fiche', form, 'textarea');
+  }
+
+  /* ---------- admin ---------- */
+  async function renderAdmin() {
+    const st = $('adminStats'), sg = $('adminSig'), lg = $('adminLog');
+    if (!S.isAdmin) return;
+    const [s, g, j] = await Promise.all([
+      sb.rpc('stats_admin'),
+      sb.from('signalements').select('id,created_at,motif,resto_id,traite').eq('traite', false).order('created_at', { ascending: false }),
+      sb.from('journal').select('at,email,action,cible,detail').order('at', { ascending: false }).limit(100)
+    ]);
+    const d = s.data || {};
+    st.replaceChildren(...[['Utilisateurs', d.utilisateurs], ['Restos visibles', d.restos], ['Créateurs à valider', d.createurs_a_valider], ['Signalements', d.signalements_ouverts]]
+      .map(([k, v]) => el('div', { class: 'stat' }, el('strong', { text: String(v == null ? '–' : v) }), el('span', { text: k }))));
+    const sigs = g.data || [];
+    sg.replaceChildren(...(sigs.length ? sigs.map((x) => {
+      const r = S.catalogue.find((c) => c.id === x.resto_id);
+      return el('article', { class: 'card' }, el('h3', { class: 'card-name', text: r ? r.nom : 'Fiche supprimée' }), el('p', { class: 'note', text: x.motif }),
+        el('p', { class: 'meta', text: new Date(x.created_at).toLocaleString('fr-FR') }),
+        el('button', { type: 'button', class: 'btn', text: 'Marquer traité', onclick: async () => { await sb.from('signalements').update({ traite: true }).eq('id', x.id); renderAdmin(); } }));
+    }) : [el('p', { class: 'meta', text: 'Aucun signalement.' })]));
+    lg.replaceChildren(...((j.data || []).map((x) => el('p', { class: 'log-line' },
+      el('span', { class: 'log-at', text: new Date(x.at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }),
+      ' ', el('b', { text: x.action }), ' ', (x.detail && x.detail.nom) || x.cible || '', ' ', el('span', { class: 'meta', text: x.email || '' })))));
   }
 
   /* ---------- briques d’affichage ---------- */
@@ -301,6 +375,7 @@
           : el('button', { type: 'button', class: 'btn primary', text: 'Ajouter à mes restos', onclick: () => addFromCatalogue(c) }),
         mine && miRow ? el('button', { type: 'button', class: 'btn', text: 'Planifier', onclick: () => openPlan({ miId: miRow.id }) }) : null,
         el('button', { type: 'button', class: 'btn', 'aria-pressed': String(loved), text: (loved ? '♥ ' : '♡ ') + 'J’aime' + (nb ? ' · ' + nb : ''), onclick: () => toggleLove(c) }),
+        el('button', { type: 'button', class: 'btn ghost', text: 'Signaler', onclick: () => openReport(c) }),
         S.isAdmin ? [
           el('button', { type: 'button', class: 'btn ghost', text: 'Modifier', onclick: () => openRestoForm('catalogue', c) }),
           el('button', { type: 'button', class: 'btn ghost', text: c.masque ? 'Afficher' : 'Masquer', onclick: () => toggleMasque(c) }),
@@ -696,7 +771,7 @@
   function renderUser() {
     const box = $('userBox'); box.replaceChildren();
     if (S.user) {
-      box.append(el('span', { class: 'who', text: S.isAdmin ? 'Admin' : (S.user.email || '').split('@')[0] }),
+      box.append(el('button', { type: 'button', class: 'btn ghost who', text: S.isAdmin ? 'Admin' : (S.user.email || '').split('@')[0], onclick: openAccount }),
         el('button', { type: 'button', class: 'btn ghost', text: 'Quitter', onclick: async () => { await sb.auth.signOut(); toast('Déconnecté'); } }));
     } else if (S.ready) {
       box.append(el('button', { type: 'button', class: 'btn primary', text: 'Connexion', onclick: () => openAuth('login') }));
@@ -708,12 +783,13 @@
     $('seg-atester').setAttribute('aria-pressed', String(S.statut === 'atester')); $('seg-teste').setAttribute('aria-pressed', String(S.statut === 'teste'));
     $('pv-semaine').setAttribute('aria-pressed', String(S.planView === 'semaine')); $('pv-avenir').setAttribute('aria-pressed', String(S.planView === 'avenir'));
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
-    ['decouvrir', 'liste', 'plan'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan';
+    $('tab-admin').hidden = !S.isAdmin; if (!S.isAdmin && S.tab === 'admin') S.tab = 'decouvrir';
+    ['decouvrir', 'liste', 'plan', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
-    const fabMode = S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
+    const fabMode = S.tab === 'admin' ? '' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
     $('fab').hidden = !fabMode; $('fab').dataset.mode = fabMode;
     $('fabLabel').textContent = { plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
     $('summary').textContent = !S.ready ? 'Chargement…' : S.loadError ? 'Connexion impossible pour le moment'
@@ -723,7 +799,7 @@
   function render() {
     renderUser(); renderChrome();
     if (S.tab === 'decouvrir') { if (S.sub === 'restos') renderCatalogue(); else renderCreators(); }
-    else if (S.tab === 'liste') renderMine(); else renderPlan();
+    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else renderPlan();
   }
   function setTab(t) { S.tab = t; try { localStorage.setItem('pr-tab', t); } catch (e) { /* ignoré */ } render(); window.scrollTo(0, 0); }
 
@@ -731,6 +807,7 @@
   $('tab-decouvrir').addEventListener('click', () => setTab('decouvrir'));
   $('tab-liste').addEventListener('click', () => setTab('liste'));
   $('tab-plan').addEventListener('click', () => setTab('plan'));
+  $('tab-admin').addEventListener('click', () => setTab('admin'));
   $('seg-sub').addEventListener('click', (e) => { const b = e.target.closest('button[data-sub]'); if (b) { S.sub = b.dataset.sub; render(); } });
   $('seg-statut').addEventListener('click', (e) => { const b = e.target.closest('button[data-statut]'); if (b) { S.statut = b.dataset.statut; S.cuisine = ''; render(); } });
   $('seg-plan').addEventListener('click', (e) => { const b = e.target.closest('button[data-pv]'); if (!b) return; S.planView = b.dataset.pv; try { localStorage.setItem('pr-pv', S.planView); } catch (x) { /* ignoré */ } render(); });
@@ -753,6 +830,7 @@
   /* ---------- démarrage ---------- */
   render();
   sb.auth.onAuthStateChange((evt, session) => {
+    if (evt === 'PASSWORD_RECOVERY') { setTimeout(openNewPassword, 0); return; }
     if (evt === 'INITIAL_SESSION' || evt === 'TOKEN_REFRESHED') return;
     const next = session ? session.user : null;
     if ((next && S.user && next.id === S.user.id) || (!next && !S.user)) return;

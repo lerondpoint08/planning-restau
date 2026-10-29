@@ -32,6 +32,7 @@
     <button class="tab" id="tab-decouvrir" role="tab" aria-selected="true">Découvrir</button>
     <button class="tab" id="tab-liste" role="tab" aria-selected="false">Mes restos</button>
     <button class="tab" id="tab-plan" role="tab" aria-selected="false">Planning</button>
+    <button class="tab" id="tab-admin" role="tab" aria-selected="false" hidden>Admin</button>
   </nav>
 
   <main>
@@ -87,7 +88,18 @@
       </div>
       <div class="list" id="planOut"></div>
     </section>
+
+    <section id="view-admin" hidden>
+      <div id="adminStats" class="stats"></div>
+      <h2 class="sec-title">Signalements à traiter</h2>
+      <div class="list" id="adminSig"></div>
+      <h2 class="sec-title">Journal (100 dernières actions)</h2>
+      <div class="list" id="adminLog"></div>
+    </section>
   </main>
+  <footer class="site-foot">
+    <a href="mentions.html">Mentions légales</a> · <a href="confidentialite.html">Confidentialité</a>
+  </footer>
 </div>
 
 <button type="button" class="fab" id="fab">
