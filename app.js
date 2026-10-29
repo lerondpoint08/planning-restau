@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0
+    planView: 'semaine', weekOffset: 0, newsOffset: 0
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -264,6 +264,32 @@
       closeSheet(); toast('Signalement envoyé, merci');
     });
     openSheet('Signaler une fiche', form, 'textarea');
+  }
+
+  /* ---------- nouveautés du jour (admin) ---------- */
+  const ACTIONS = {
+    inscription: 'Nouvelle inscription', suppression_compte: 'Compte supprimé',
+    'insert:restos': 'Resto ajouté au catalogue', 'update:restos': 'Resto modifié', 'delete:restos': 'Resto supprimé du catalogue',
+    'insert:createurs': 'Demande de créateur', 'update:createurs': 'Créateur modifié ou validé', 'delete:createurs': 'Créateur supprimé',
+    'insert:admins': 'Admin ajouté', 'delete:admins': 'Admin retiré', 'insert:signalements': 'Signalement reçu'
+  };
+  async function renderNews() {
+    if (!S.isAdmin) return;
+    const day = addDays(new Date(), S.newsOffset), start = new Date(day.getFullYear(), day.getMonth(), day.getDate()), end = addDays(start, 1);
+    $('nw-label').textContent = (S.newsOffset === 0 ? 'Aujourd’hui · ' : S.newsOffset === -1 ? 'Hier · ' : '') + cap(fmtLong.format(start)) + ' ' + start.getFullYear();
+    $('nw-next').disabled = S.newsOffset >= 0;
+    const r = await sb.from('journal').select('at,email,action,cible,detail').gte('at', start.toISOString()).lt('at', end.toISOString()).order('at', { ascending: false }).limit(500);
+    const rows = r.data || [], n = (k) => rows.filter((x) => x.action === k).length;
+    $('newsStats').replaceChildren(...[['Inscriptions', n('inscription')], ['Connexions', n('connexion')], ['Restos ajoutés', n('insert:restos')], ['Signalements', n('insert:signalements')]]
+      .map(([k, v]) => el('div', { class: 'stat' }, el('strong', { text: String(v) }), el('span', { text: k }))));
+    const list = rows.filter((x) => x.action !== 'connexion');
+    $('newsOut').replaceChildren(...(r.error ? [el('p', { class: 'meta', text: 'Chargement impossible.' })]
+      : list.length ? list.map((x) => el('article', { class: 'card' },
+        el('p', { class: 'meta', text: new Date(x.at).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) }),
+        el('h3', { class: 'card-name', text: ACTIONS[x.action] || x.action }),
+        (x.detail && x.detail.nom) || (x.action === 'inscription' ? x.email : '') ? el('p', { class: 'note', text: (x.detail && x.detail.nom) || x.email }) : null,
+        x.email && x.action !== 'inscription' ? el('p', { class: 'meta', text: 'Par ' + x.email }) : null))
+      : [el('p', { class: 'meta', text: 'Rien de nouveau ce jour-là.' })]));
   }
 
   /* ---------- admin ---------- */
@@ -787,13 +813,13 @@
     $('seg-atester').setAttribute('aria-pressed', String(S.statut === 'atester')); $('seg-teste').setAttribute('aria-pressed', String(S.statut === 'teste'));
     $('pv-semaine').setAttribute('aria-pressed', String(S.planView === 'semaine')); $('pv-avenir').setAttribute('aria-pressed', String(S.planView === 'avenir'));
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
-    $('tab-admin').hidden = !S.isAdmin; if (!S.isAdmin && S.tab === 'admin') S.tab = 'decouvrir';
-    ['decouvrir', 'liste', 'plan', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin';
+    $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
+    ['decouvrir', 'liste', 'plan', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
-    const fabMode = S.tab === 'admin' ? '' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
+    const fabMode = (S.tab === 'admin' || S.tab === 'news') ? '' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
     $('fab').hidden = !fabMode; $('fab').dataset.mode = fabMode;
     $('fabLabel').textContent = { plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
     $('summary').textContent = !S.ready ? 'Chargement…' : S.loadError ? 'Connexion impossible pour le moment'
@@ -803,7 +829,7 @@
   function render() {
     renderUser(); renderChrome();
     if (S.tab === 'decouvrir') { if (S.sub === 'restos') renderCatalogue(); else renderCreators(); }
-    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else renderPlan();
+    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else renderPlan();
   }
   function setTab(t) { S.tab = t; try { localStorage.setItem('pr-tab', t); } catch (e) { /* ignoré */ } render(); window.scrollTo(0, 0); }
 
@@ -812,6 +838,9 @@
   $('tab-liste').addEventListener('click', () => setTab('liste'));
   $('tab-plan').addEventListener('click', () => setTab('plan'));
   $('tab-admin').addEventListener('click', () => setTab('admin'));
+  $('tab-news').addEventListener('click', () => setTab('news'));
+  $('nw-prev').addEventListener('click', () => { S.newsOffset -= 1; render(); });
+  $('nw-next').addEventListener('click', () => { if (S.newsOffset < 0) { S.newsOffset += 1; render(); } });
   $('seg-sub').addEventListener('click', (e) => { const b = e.target.closest('button[data-sub]'); if (b) { S.sub = b.dataset.sub; render(); } });
   $('seg-statut').addEventListener('click', (e) => { const b = e.target.closest('button[data-statut]'); if (b) { S.statut = b.dataset.statut; S.cuisine = ''; render(); } });
   $('seg-plan').addEventListener('click', (e) => { const b = e.target.closest('button[data-pv]'); if (!b) return; S.planView = b.dataset.pv; try { localStorage.setItem('pr-pv', S.planView); } catch (x) { /* ignoré */ } render(); });

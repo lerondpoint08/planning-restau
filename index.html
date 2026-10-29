@@ -32,6 +32,7 @@
     <button class="tab" id="tab-decouvrir" role="tab" aria-selected="true">Découvrir</button>
     <button class="tab" id="tab-liste" role="tab" aria-selected="false">Mes restos</button>
     <button class="tab" id="tab-plan" role="tab" aria-selected="false">Planning</button>
+    <button class="tab" id="tab-news" role="tab" aria-selected="false" hidden>Nouveautés</button>
     <button class="tab" id="tab-admin" role="tab" aria-selected="false" hidden>Admin</button>
   </nav>
 
@@ -87,6 +88,16 @@
         <button type="button" class="icon-btn" id="wk-next" aria-label="Semaine suivante">›</button>
       </div>
       <div class="list" id="planOut"></div>
+    </section>
+
+    <section id="view-news" hidden>
+      <div class="weekbar">
+        <button type="button" class="icon-btn" id="nw-prev" aria-label="Jour précédent">‹</button>
+        <div class="weekbar-label" id="nw-label"></div>
+        <button type="button" class="icon-btn" id="nw-next" aria-label="Jour suivant">›</button>
+      </div>
+      <div id="newsStats" class="stats"></div>
+      <div class="list" id="newsOut"></div>
     </section>
 
     <section id="view-admin" hidden>
