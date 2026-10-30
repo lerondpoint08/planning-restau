@@ -253,17 +253,17 @@
       el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Elle est définitive.' }), del));
   }
   function openReport(c) {
-    if (needLogin('Connecte-toi pour signaler une fiche.')) return;
+    if (needLogin('Connecte-toi pour donner ton avis.')) return;
     const err = el('p', { class: 'err', role: 'alert' });
-    const motif = el('textarea', { name: 'motif', rows: '3', maxlength: '500', required: true, placeholder: 'Ex. adresse fausse, resto fermé, demande de retrait…' });
-    const form = el('form', {}, el('p', { class: 'meta', text: c.nom }), field('Motif', motif), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer le signalement' }));
+    const motif = el('textarea', { name: 'motif', rows: '3', maxlength: '500', required: true, placeholder: 'Ton avis sur ce resto, ou une correction : adresse fausse, resto fermé, demande de retrait…' });
+    const form = el('form', {}, el('p', { class: 'meta', text: c.nom }), field('Ton avis', motif), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer mon avis' }));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const r = await sb.from('signalements').insert({ resto_id: c.id, motif: motif.value.trim() });
       if (r.error) { err.textContent = 'Envoi impossible (3 caractères minimum).'; return; }
-      closeSheet(); toast('Signalement envoyé, merci');
+      closeSheet(); toast('Avis envoyé, merci');
     });
-    openSheet('Signaler une fiche', form, 'textarea');
+    openSheet('Donner un avis', form, 'textarea');
   }
 
   /* ---------- nouveautés du jour (admin) ---------- */
@@ -271,7 +271,7 @@
     inscription: 'Nouvelle inscription', suppression_compte: 'Compte supprimé',
     'insert:restos': 'Resto ajouté au catalogue', 'update:restos': 'Resto modifié', 'delete:restos': 'Resto supprimé du catalogue',
     'insert:createurs': 'Demande de créateur', 'update:createurs': 'Créateur modifié ou validé', 'delete:createurs': 'Créateur supprimé',
-    'insert:admins': 'Admin ajouté', 'delete:admins': 'Admin retiré', 'insert:signalements': 'Signalement reçu'
+    'insert:admins': 'Admin ajouté', 'delete:admins': 'Admin retiré', 'insert:signalements': 'Avis reçu'
   };
   async function renderNews() {
     if (!S.isAdmin) return;
@@ -280,7 +280,7 @@
     $('nw-next').disabled = S.newsOffset >= 0;
     const r = await sb.from('journal').select('at,email,action,cible,detail').gte('at', start.toISOString()).lt('at', end.toISOString()).order('at', { ascending: false }).limit(500);
     const rows = r.data || [], n = (k) => rows.filter((x) => x.action === k).length;
-    $('newsStats').replaceChildren(...[['Inscriptions', n('inscription')], ['Connexions', n('connexion')], ['Restos ajoutés', n('insert:restos')], ['Signalements', n('insert:signalements')]]
+    $('newsStats').replaceChildren(...[['Inscriptions', n('inscription')], ['Connexions', n('connexion')], ['Restos ajoutés', n('insert:restos')], ['Avis', n('insert:signalements')]]
       .map(([k, v]) => el('div', { class: 'stat' }, el('strong', { text: String(v) }), el('span', { text: k }))));
     const list = rows.filter((x) => x.action !== 'connexion');
     $('newsOut').replaceChildren(...(r.error ? [el('p', { class: 'meta', text: 'Chargement impossible.' })]
@@ -302,7 +302,7 @@
       sb.from('journal').select('at,email,action,cible,detail').order('at', { ascending: false }).limit(100)
     ]);
     const d = s.data || {};
-    st.replaceChildren(...[['Utilisateurs', d.utilisateurs], ['Restos visibles', d.restos], ['Créateurs à valider', d.createurs_a_valider], ['Signalements', d.signalements_ouverts]]
+    st.replaceChildren(...[['Utilisateurs', d.utilisateurs], ['Restos visibles', d.restos], ['Créateurs à valider', d.createurs_a_valider], ['Avis à traiter', d.signalements_ouverts]]
       .map(([k, v]) => el('div', { class: 'stat' }, el('strong', { text: String(v == null ? '–' : v) }), el('span', { text: k }))));
     const sigs = g.data || [];
     sg.replaceChildren(...(sigs.length ? sigs.map((x) => {
@@ -310,7 +310,7 @@
       return el('article', { class: 'card' }, el('h3', { class: 'card-name', text: r ? r.nom : 'Fiche supprimée' }), el('p', { class: 'note', text: x.motif }),
         el('p', { class: 'meta', text: new Date(x.created_at).toLocaleString('fr-FR') }),
         el('button', { type: 'button', class: 'btn', text: 'Marquer traité', onclick: async () => { await sb.from('signalements').update({ traite: true }).eq('id', x.id); renderAdmin(); } }));
-    }) : [el('p', { class: 'meta', text: 'Aucun signalement.' })]));
+    }) : [el('p', { class: 'meta', text: 'Aucun avis.' })]));
     lg.replaceChildren(...((j.data || []).map((x) => el('p', { class: 'log-line' },
       el('span', { class: 'log-at', text: new Date(x.at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }),
       ' ', el('b', { text: x.action }), ' ', (x.detail && x.detail.nom) || x.cible || '', ' ', el('span', { class: 'meta', text: x.email || '' })))));
@@ -405,7 +405,7 @@
           : el('button', { type: 'button', class: 'btn primary', text: 'Ajouter à mes restos', onclick: () => addFromCatalogue(c) }),
         mine && miRow ? el('button', { type: 'button', class: 'btn', text: 'Planifier', onclick: () => openPlan({ miId: miRow.id }) }) : null,
         el('button', { type: 'button', class: 'btn', 'aria-pressed': String(loved), text: (loved ? '♥ ' : '♡ ') + 'J’aime' + (nb ? ' · ' + nb : ''), onclick: () => toggleLove(c) }),
-        el('button', { type: 'button', class: 'btn ghost', text: 'Signaler', onclick: () => openReport(c) }),
+        el('button', { type: 'button', class: 'btn ghost', text: 'Avis', onclick: () => openReport(c) }),
         S.isAdmin ? [
           el('button', { type: 'button', class: 'btn ghost', text: 'Modifier', onclick: () => openRestoForm('catalogue', c) }),
           el('button', { type: 'button', class: 'btn ghost', text: c.masque ? 'Afficher' : 'Masquer', onclick: () => toggleMasque(c) }),
