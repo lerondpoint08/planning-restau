@@ -229,3 +229,10 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .idee .vote { flex: none; min-width: 64px; }
 .idee .vote[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .idee select { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 0 10px; font: inherit; }
+
+.guests { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.guest { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; background: var(--surface); }
+.guest.oui { background: var(--accent-soft); }
+.guest.non { text-decoration: line-through; color: var(--muted); }
+.guest .x { border: 0; background: transparent; color: var(--muted); font-size: 16px; min-width: 28px; min-height: 28px; border-radius: 50%; }
+.invitation { border-color: var(--accent); }

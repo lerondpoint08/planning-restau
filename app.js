@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -159,7 +159,7 @@
     if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
     S.ready = true; render(); handleInvite();
   }
@@ -333,6 +333,79 @@
       closeSheet(); toast('Idée envoyée, merci !'); await loadIdees(); renderIdees();
     });
     openSheet('Proposer une idée', form, 'input[name="titre"]');
+  }
+
+  /* ---------- invitations de sorties ---------- */
+  const ST_LABEL = { oui: 'vient', non: 'ne vient pas', en_attente: 'en attente' };
+  async function loadInvites() {
+    if (!S.user) { S.invitations = []; S.guests = []; return; }
+    const [i, g] = await Promise.all([sb.rpc('invitations_liste'), sb.rpc('participants_mes_sorties')]);
+    S.invitations = i.error ? [] : (i.data || []);
+    S.guests = g.error ? [] : (g.data || []);
+  }
+  const invPending = () => S.invitations.filter((x) => x.statut === 'en_attente' && x.date >= todayKey());
+  const invAccepted = () => S.invitations.filter((x) => x.statut === 'oui' && x.date >= todayKey()).map((x) => ({ ...x, _inv: true, id: x.sortie_id }));
+  async function answerSortie(inv, statut) {
+    const r = await sb.rpc('repondre_sortie', { p_sortie: inv.sortie_id, p_statut: statut });
+    if (r.error) { toast('Réponse impossible'); return; }
+    await loadInvites(); render(); toast(statut === 'oui' ? 'C’est noté, tu viens !' : 'Réponse envoyée');
+  }
+  async function dropGuest(g) {
+    const r = await sb.rpc('retirer_invitation', { p_id: g.id });
+    if (r.error) { toast('Action impossible'); return; }
+    await loadInvites(); render(); toast(g.pseudo + ' retiré de la sortie');
+  }
+  function openInvite(s) {
+    const deja = new Set(S.guests.filter((g) => g.sortie_id === s.id).map((g) => g.pseudo));
+    const dispo = S.contacts.filter((c) => c.sens === 'contact' && !deja.has(c.pseudo));
+    if (!dispo.length) {
+      openSheet('Inviter des contacts', el('div', { class: 'stack' },
+        el('p', { class: 'meta', text: S.contacts.some((c) => c.sens === 'contact') ? 'Tous tes contacts sont déjà invités à cette sortie.' : 'Tu n’as pas encore de contact. Partage ton lien depuis l’onglet Contacts.' }),
+        el('button', { type: 'button', class: 'btn primary big', text: 'Aller aux contacts', onclick: () => { closeSheet(); setTab('contacts'); } })));
+      return;
+    }
+    const err = el('p', { class: 'err', role: 'alert' });
+    const boxes = dispo.map((c) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', value: c.id }), el('span', { text: c.pseudo })));
+    const form = el('form', {}, el('p', { class: 'meta', text: 'Choisis qui inviter. Ils verront la date, le moment et le resto, et répondent « je viens » ou « je ne peux pas ».' }),
+      el('div', { class: 'opts' }, boxes), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer l’invitation' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ids = [...form.querySelectorAll('input:checked')].map((i) => i.value);
+      if (!ids.length) { err.textContent = 'Choisis au moins un contact.'; return; }
+      const r = await sb.rpc('inviter_sortie', { p_sortie: s.id, p_contacts: ids });
+      if (r.error) { err.textContent = 'Envoi impossible. Réessaie dans un instant.'; return; }
+      closeSheet(); toast('Invitation envoyée'); await loadInvites(); render();
+    });
+    openSheet('Inviter des contacts', form);
+  }
+  function guestsBlock(s) {
+    const gs = S.guests.filter((g) => g.sortie_id === s.id);
+    return gs.length ? el('div', { class: 'guests' }, gs.map((g) => el('span', { class: 'guest ' + g.statut },
+      g.pseudo + ' · ' + ST_LABEL[g.statut], el('button', { type: 'button', class: 'x', 'aria-label': 'Retirer ' + g.pseudo, text: '×', onclick: () => dropGuest(g) })))) : null;
+  }
+  function invCard(inv) {
+    const r = { nom: inv.nom, adresse: inv.adresse, ville: inv.ville, cuisine: inv.cuisine, note: inv.note, lien: inv.lien };
+    const s = { id: inv.sortie_id, date: inv.date, creneau: inv.creneau };
+    const slot = CRENEAUX[inv.creneau] || CRENEAUX.soir;
+    const autres = (inv.participants || []).filter((p) => p.statut === 'oui').map((p) => p.pseudo);
+    const actions = inv.statut === 'en_attente' ? [
+      el('button', { type: 'button', class: 'btn primary', text: 'Je viens', onclick: () => answerSortie(inv, 'oui') }),
+      el('button', { type: 'button', class: 'btn', text: 'Je ne peux pas', onclick: () => answerSortie(inv, 'non') })
+    ] : [
+      el('button', { type: 'button', class: 'btn primary', text: 'Agenda iPhone', onclick: () => downloadIcs(s, r) }),
+      el('a', { class: 'btn', href: gcalUrl(s, r), target: '_blank', rel: 'noopener noreferrer', text: 'Google Agenda' }),
+      armedButton('Je ne viens plus', 'Confirmer ?', () => answerSortie(inv, 'non'))
+    ];
+    return el('article', { class: 'card sortie invitation' },
+      el('span', { class: 'slot', text: slot.label }),
+      el('div', { class: 'sortie-main' },
+        el('p', { class: 'meta', text: 'Invitation de ' + inv.organisateur + ' · ' + cap(fmtShort.format(parseISO(inv.date))) }),
+        el('h3', { class: 'card-name', text: r.nom }),
+        r.cuisine ? el('p', { class: 'meta', text: r.cuisine }) : null,
+        addressBlock(r),
+        autres.length ? el('p', { class: 'meta', text: 'Viennent : ' + autres.join(', ') }) : null,
+        el('div', { class: 'sortie-actions' }, (r.adresse || r.ville) ? el('a', { class: 'link', href: mapsUrl(r), target: '_blank', rel: 'noopener noreferrer', text: 'Itinéraire' }) : null),
+        el('div', { class: 'sortie-actions' }, actions)));
   }
 
   /* ---------- contacts ---------- */
@@ -896,7 +969,9 @@
         r.cuisine ? el('p', { class: 'meta', text: r.cuisine }) : null,
         addressBlock(r, () => openRestoForm('perso', r)),
         infosBlock(r),
+        guestsBlock(s),
         el('div', { class: 'sortie-actions' },
+          el('button', { type: 'button', class: 'btn', text: '+ Inviter', onclick: () => openInvite(s) }),
           el('a', { class: 'link', href: mapsUrl(r), target: '_blank', rel: 'noopener noreferrer', text: 'Itinéraire' }),
           addressLine(r) ? el('button', { type: 'button', class: 'btn ghost', text: 'Copier', onclick: () => copyText(addressLine(r)) }) : null),
         el('div', { class: 'sortie-actions' },
@@ -910,27 +985,31 @@
     $('weekbar').hidden = !week;
     if (!S.ready) { out.append(emptyState('Chargement…', 'Je récupère ton planning.')); return; }
     if (!S.user) { out.append(emptyState('Ton planning', 'Connecte-toi pour planifier tes sorties.', el('button', { type: 'button', class: 'btn primary', text: 'Se connecter', onclick: () => openAuth('login') }))); return; }
+    const pend = invPending();
+    if (pend.length) out.append(el('section', { class: 'day' }, el('div', { class: 'day-head' }, el('h3', { text: 'Invitations (' + pend.length + ')' })), pend.map(invCard)));
+    const acc = invAccepted();
+    const card = (s) => (s._inv ? invCard(s) : sortieCard(s));
     if (week) {
       const start = addDays(mondayOf(new Date()), S.weekOffset * 7), end = addDays(start, 6);
       $('wk-label').textContent = fmtDM.format(start) + ' – ' + fmtDM.format(end);
       for (let i = 0; i < 7; i++) {
         const day = addDays(start, i), key = iso(day);
-        const items = S.sorties.filter((s) => s.date === key).sort(sortSorties);
+        const items = S.sorties.concat(acc).filter((s) => s.date === key).sort(sortSorties);
         out.append(el('section', { class: 'day' + (key < todayKey() ? ' past' : '') },
           el('div', { class: 'day-head' },
             el('h3', {}, cap(fmtShort.format(day)), key === todayKey() ? el('span', { class: 'badge', text: 'Aujourd’hui' }) : null),
             el('button', { type: 'button', class: 'day-add', 'aria-label': 'Planifier le ' + fmtLong.format(day), text: '+ Planifier', onclick: () => openPlan({ date: key }) })),
-          items.length ? items.map(sortieCard) : el('p', { class: 'day-empty', text: 'Rien de prévu' })));
+          items.length ? items.map(card) : el('p', { class: 'day-empty', text: 'Rien de prévu' })));
       }
       return;
     }
-    const list = upcoming();
-    if (!list.length) { out.append(emptyState('Aucune sortie à venir', 'Planifie un resto depuis sa carte, ou touche « + Planifier » dans la vue Semaine.', el('button', { type: 'button', class: 'btn primary', text: 'Planifier une sortie', onclick: () => openPlan({}) }))); return; }
+    const list = upcoming().concat(acc).sort(sortSorties);
+    if (!list.length && !pend.length) { out.append(emptyState('Aucune sortie à venir', 'Planifie un resto depuis sa carte, ou touche « + Planifier » dans la vue Semaine.', el('button', { type: 'button', class: 'btn primary', text: 'Planifier une sortie', onclick: () => openPlan({}) }))); return; }
     const groups = new Map();
     list.forEach((s) => { if (!groups.has(s.date)) groups.set(s.date, []); groups.get(s.date).push(s); });
     const tk = todayKey(), tm = iso(addDays(new Date(), 1));
     groups.forEach((items, key) => {
-      out.append(el('section', { class: 'day' }, el('div', { class: 'day-head' }, el('h3', { text: key === tk ? 'Aujourd’hui' : key === tm ? 'Demain' : cap(fmtLong.format(parseISO(key))) })), items.map(sortieCard)));
+      out.append(el('section', { class: 'day' }, el('div', { class: 'day-head' }, el('h3', { text: key === tk ? 'Aujourd’hui' : key === tm ? 'Demain' : cap(fmtLong.format(parseISO(key))) })), items.map(card)));
     });
   }
   async function removeSortie(s) {
@@ -982,7 +1061,7 @@
     $('previewBar').hidden = !(S.realAdmin && S.preview);
     $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
     ['decouvrir', 'liste', 'plan', 'idees', 'contacts', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees'; $('view-contacts').hidden = S.tab !== 'contacts'; $('tab-contacts').textContent = nbRecues() ? 'Contacts (' + nbRecues() + ')' : 'Contacts';
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees'; $('view-contacts').hidden = S.tab !== 'contacts'; $('tab-plan').textContent = invPending().length ? 'Planning (' + invPending().length + ')' : 'Planning'; $('tab-contacts').textContent = nbRecues() ? 'Contacts (' + nbRecues() + ')' : 'Contacts';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcomeSignup').hidden = !!S.user;
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
@@ -1034,6 +1113,10 @@
   $('sheetClose').addEventListener('click', closeSheet);
   $('ov').addEventListener('click', (e) => { if (e.target === $('ov')) closeSheet(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('ov').hidden) closeSheet(); });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadPrivate()]).then(render, () => {});
+  });
 
   /* ---------- démarrage ---------- */
   try {
