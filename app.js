@@ -255,7 +255,7 @@
       el('p', { class: 'meta', text: S.user.email }),
       el('button', { type: 'button', class: 'btn', text: 'Changer mon mot de passe', onclick: openNewPassword }),
       S.realAdmin ? el('button', { type: 'button', class: 'btn', text: 'Passer en mode invité', onclick: () => { closeSheet(); setPreview(true); } }) : null,
-      el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Elle est définitive.' }), del));
+      el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Tes idées, tes avis et tes votes restent, sans ton nom, pour aider la communauté. Elle est définitive.' }), del));
   }
   function openReport(c) {
     if (needLogin('Connecte-toi pour donner ton avis.')) return;
