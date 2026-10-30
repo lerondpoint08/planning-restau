@@ -19,6 +19,7 @@
 <link rel="stylesheet" href="style.css?v=f7c6079">
 </head>
 <body>
+<div class="preview-bar" id="previewBar" hidden><span>Mode invité : tu vois le site comme un utilisateur ordinaire.</span><button type="button" class="btn primary" id="previewOff">Revenir en admin</button></div>
 <div class="wrap">
   <header class="top">
     <div class="top-row">
@@ -102,6 +103,7 @@
     </section>
 
     <section id="view-admin" hidden>
+      <button type="button" class="btn" id="guestBtn">Passer en mode invité</button>
       <div id="adminStats" class="stats"></div>
       <h2 class="sec-title">Avis à traiter</h2>
       <div class="list" id="adminSig"></div>

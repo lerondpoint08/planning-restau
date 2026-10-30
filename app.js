@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -151,7 +151,7 @@
     S.mine = m.data || [];
     S.sorties = s.error ? [] : (s.data || []);
     S.loves = new Set((l.data || []).map((x) => x.resto_id));
-    S.isAdmin = a.data === true;
+    S.realAdmin = a.data === true; S.isAdmin = S.realAdmin && !S.preview;
   }
   async function refresh() {
     try { await Promise.all([loadPublic(), loadPrivate()]); S.loadError = false; }
@@ -814,6 +814,7 @@
     $('seg-atester').setAttribute('aria-pressed', String(S.statut === 'atester')); $('seg-teste').setAttribute('aria-pressed', String(S.statut === 'teste'));
     $('pv-semaine').setAttribute('aria-pressed', String(S.planView === 'semaine')); $('pv-avenir').setAttribute('aria-pressed', String(S.planView === 'avenir'));
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
+    $('previewBar').hidden = !(S.realAdmin && S.preview);
     $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
     ['decouvrir', 'liste', 'plan', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
     $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news';
@@ -839,6 +840,9 @@
   $('tab-decouvrir').addEventListener('click', () => setTab('decouvrir'));
   $('tab-liste').addEventListener('click', () => setTab('liste'));
   $('tab-plan').addEventListener('click', () => setTab('plan'));
+  function setPreview(on) { S.preview = on; S.isAdmin = S.realAdmin && !on; S.tab = on ? 'decouvrir' : 'admin'; render(); window.scrollTo(0, 0); toast(on ? 'Mode invité' : 'Mode admin'); }
+  $('guestBtn').addEventListener('click', () => setPreview(true));
+  $('previewOff').addEventListener('click', () => setPreview(false));
   $('tab-admin').addEventListener('click', () => setTab('admin'));
   $('tab-news').addEventListener('click', () => setTab('news'));
   $('nw-prev').addEventListener('click', () => { S.newsOffset -= 1; render(); });
