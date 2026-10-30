@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -159,9 +159,9 @@
     if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
-    S.ready = true; render();
+    S.ready = true; render(); handleInvite();
   }
 
   /* ---------- feuille (fenêtre) ---------- */
@@ -333,6 +333,102 @@
       closeSheet(); toast('Idée envoyée, merci !'); await loadIdees(); renderIdees();
     });
     openSheet('Proposer une idée', form, 'input[name="titre"]');
+  }
+
+  /* ---------- contacts ---------- */
+  const inviteUrl = () => location.origin + location.pathname + '?ami=' + S.profil.code;
+  async function loadContacts() {
+    if (!S.user) { S.profil = null; S.contacts = []; return; }
+    const [p, c] = await Promise.all([sb.rpc('mon_profil'), sb.rpc('contacts_liste')]);
+    S.profil = !p.error && p.data && p.data.length ? p.data[0] : null;
+    S.contacts = c.error ? [] : (c.data || []);
+  }
+  const nbRecues = () => S.contacts.filter((c) => c.sens === 'recue').length;
+  function openPseudoForm(then) {
+    const err = el('p', { class: 'err', role: 'alert' });
+    const pseudo = inp('pseudo', { req: true, min: 2, max: 30, value: (S.profil && S.profil.pseudo) || savedPseudo(), ph: 'Ton pseudo' });
+    const form = el('form', {}, el('p', { class: 'meta', text: 'Ce pseudo est montré à tes contacts. N’utilise pas ton e-mail.' }), field('Pseudo', pseudo), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Enregistrer' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await sb.rpc('definir_profil', { p_pseudo: pseudo.value.trim() });
+      if (r.error) { err.textContent = 'Pseudo refusé (2 à 30 caractères).'; return; }
+      savePseudo(pseudo.value.trim()); closeSheet(); await loadContacts(); render(); if (then) then();
+    });
+    openSheet('Mon pseudo', form, 'input[name="pseudo"]');
+  }
+  async function shareInvite() {
+    const url = inviteUrl();
+    const data = { title: 'Planning Restau', text: S.profil.pseudo + ' t’invite sur Planning Restau pour organiser des sorties resto.', url };
+    if (navigator.share) { try { await navigator.share(data); } catch (e) { /* annulé */ } return; }
+    copyInvite();
+  }
+  async function copyInvite() {
+    try { await navigator.clipboard.writeText(inviteUrl()); toast('Lien copié'); }
+    catch (e) { openSheet('Mon lien', el('div', { class: 'stack' }, el('input', { value: inviteUrl(), readonly: true, 'aria-label': 'Lien d’invitation', onfocus: (ev) => ev.target.select() }))); }
+  }
+  async function answerContact(c, ok) {
+    const r = await sb.rpc('repondre_contact', { p_id: c.id, p_accepte: ok });
+    if (r.error) { toast('Action impossible'); return; }
+    await loadContacts(); render(); toast(ok ? c.pseudo + ' est dans tes contacts' : 'Demande refusée');
+  }
+  async function dropContact(c, msg) {
+    const r = await sb.rpc('supprimer_contact', { p_id: c.id });
+    if (r.error) { toast('Action impossible'); return; }
+    await loadContacts(); render(); toast(msg);
+  }
+  const INVITE_MSG = { envoyee: 'Demande envoyée', deja_envoyee: 'Demande déjà envoyée, en attente de réponse', deja_contact: 'Vous êtes déjà en contact', acceptee: 'Vous êtes maintenant en contact', soi: 'C’est ton propre lien', introuvable: 'Lien d’invitation invalide' };
+  async function sendInvite(code) {
+    try { sessionStorage.removeItem('pr-ami'); } catch (e) { /* ignoré */ }
+    S.invite = '';
+    const r = await sb.rpc('demande_contact', { p_code: code });
+    toast(r.error ? 'Demande impossible' : (INVITE_MSG[r.data] || 'Fait'));
+    await loadContacts(); setTab('contacts');
+  }
+  async function handleInvite() {
+    if (!S.invite || !S.ready) return;
+    if (!S.user) {
+      const nom = await sb.rpc('profil_par_code', { p_code: S.invite });
+      if ($('ov').hidden) openAuth('signup', (nom.data ? nom.data + ' t’invite' : 'Invitation') + ' : crée un compte ou connecte-toi pour envoyer ta demande de contact.');
+      return;
+    }
+    if (!S.profil) { setTab('contacts'); if ($('ov').hidden) openPseudoForm(() => handleInvite()); return; }
+    await sendInvite(S.invite);
+  }
+  function contactRow(c, actions) {
+    return el('div', { class: 'card' }, el('div', { class: 'card-top' }, el('h3', { class: 'card-name', text: c.pseudo }),
+      el('span', { class: 'meta', text: new Date(c.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) })),
+      el('div', { class: 'actions' }, actions));
+  }
+  function renderContacts() {
+    const box = $('contactsOut'); box.replaceChildren();
+    if (!S.user) {
+      box.append(el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Tes contacts' }),
+        el('p', { class: 'note', text: 'Ajoute des amis pour organiser des sorties resto ensemble. Connecte-toi pour commencer.' }),
+        el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn primary', text: 'Connexion', onclick: () => openAuth('login') }),
+          el('button', { type: 'button', class: 'btn', text: 'S’inscrire', onclick: () => openAuth('signup') }))));
+      return;
+    }
+    if (!S.profil) {
+      box.append(el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Choisis ton pseudo' }),
+        el('p', { class: 'note', text: 'C’est le nom que tes contacts verront. Tu en as besoin pour envoyer ou recevoir des demandes.' }),
+        el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn primary', text: 'Choisir mon pseudo', onclick: () => openPseudoForm() }))));
+      return;
+    }
+    box.append(el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Inviter un ami' }),
+      el('p', { class: 'note', text: 'Envoie ton lien par message. Quand ton ami l’ouvre et se connecte, tu reçois sa demande ici.' }),
+      el('p', { class: 'meta', text: 'Mon pseudo : ' + S.profil.pseudo }),
+      el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn primary', text: 'Partager mon lien', onclick: shareInvite }),
+        el('button', { type: 'button', class: 'btn', text: 'Copier le lien', onclick: copyInvite }),
+        el('button', { type: 'button', class: 'btn ghost', text: 'Changer mon pseudo', onclick: () => openPseudoForm() }))));
+    const rec = S.contacts.filter((c) => c.sens === 'recue'), env = S.contacts.filter((c) => c.sens === 'envoyee'), ok = S.contacts.filter((c) => c.sens === 'contact');
+    const sect = (titre, rows, empty, build) => [el('h2', { class: 'sec-title', text: titre + ' (' + rows.length + ')' }), ...(rows.length ? rows.map(build) : [el('p', { class: 'meta', text: empty })])];
+    box.append(...sect('Demandes reçues', rec, 'Aucune demande en attente.', (c) => contactRow(c, [
+      el('button', { type: 'button', class: 'btn primary', text: 'Accepter', onclick: () => answerContact(c, true) }),
+      el('button', { type: 'button', class: 'btn ghost', text: 'Refuser', onclick: () => answerContact(c, false) })])));
+    box.append(...sect('Demandes envoyées', env, 'Aucune demande envoyée.', (c) => contactRow(c, [
+      el('span', { class: 'badge ex', text: 'En attente' }), armedButton('Annuler', 'Confirmer ?', () => dropContact(c, 'Demande annulée'))])));
+    box.append(...sect('Mes contacts', ok, 'Pas encore de contact. Partage ton lien !', (c) => contactRow(c, [
+      armedButton('Retirer', 'Confirmer ?', () => dropContact(c, 'Contact retiré'))])));
   }
 
   /* ---------- nouveautés du jour (admin) ---------- */
@@ -885,13 +981,13 @@
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
     $('previewBar').hidden = !(S.realAdmin && S.preview);
     $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
-    ['decouvrir', 'liste', 'plan', 'idees', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees';
+    ['decouvrir', 'liste', 'plan', 'idees', 'contacts', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees'; $('view-contacts').hidden = S.tab !== 'contacts'; $('tab-contacts').textContent = nbRecues() ? 'Contacts (' + nbRecues() + ')' : 'Contacts';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcomeSignup').hidden = !!S.user;
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
-    const fabMode = (S.tab === 'admin' || S.tab === 'news') ? '' : S.tab === 'idees' ? 'idee' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
+    const fabMode = (S.tab === 'admin' || S.tab === 'news' || S.tab === 'contacts') ? '' : S.tab === 'idees' ? 'idee' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
     $('fab').hidden = !fabMode; $('fab').dataset.mode = fabMode;
     $('fabLabel').textContent = { idee: 'Proposer une idée', plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
     $('summary').textContent = !S.ready ? 'Chargement…' : S.loadError ? 'Connexion impossible pour le moment'
@@ -901,7 +997,7 @@
   function render() {
     renderUser(); renderChrome();
     if (S.tab === 'decouvrir') { if (S.sub === 'restos') renderCatalogue(); else renderCreators(); }
-    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else if (S.tab === 'idees') renderIdees(); else renderPlan();
+    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else if (S.tab === 'idees') renderIdees(); else if (S.tab === 'contacts') renderContacts(); else renderPlan();
   }
   function setTab(t) { S.tab = t; try { localStorage.setItem('pr-tab', t); } catch (e) { /* ignoré */ } render(); window.scrollTo(0, 0); }
 
@@ -915,6 +1011,7 @@
   $('tab-admin').addEventListener('click', () => setTab('admin'));
   $('tab-news').addEventListener('click', () => setTab('news'));
   $('tab-idees').addEventListener('click', () => setTab('idees'));
+  $('tab-contacts').addEventListener('click', () => setTab('contacts'));
   $('seg-idees').addEventListener('click', (e) => { const b = e.target.closest('button[data-isort]'); if (b) { S.ideeSort = b.dataset.isort; renderIdees(); } });
   $('nw-prev').addEventListener('click', () => { S.newsOffset -= 1; render(); });
   $('nw-next').addEventListener('click', () => { if (S.newsOffset < 0) { S.newsOffset += 1; render(); } });
@@ -939,6 +1036,11 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('ov').hidden) closeSheet(); });
 
   /* ---------- démarrage ---------- */
+  try {
+    const q = new URLSearchParams(location.search).get('ami');
+    if (q) { sessionStorage.setItem('pr-ami', q.slice(0, 20)); history.replaceState(null, '', location.pathname); }
+    S.invite = sessionStorage.getItem('pr-ami') || '';
+  } catch (e) { /* ignoré */ }
   render();
   sb.auth.onAuthStateChange((evt, session) => {
     if (evt === 'PASSWORD_RECOVERY') { setTimeout(openNewPassword, 0); return; }
