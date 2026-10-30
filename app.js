@@ -154,8 +154,9 @@
     S.realAdmin = a.data === true; S.isAdmin = S.realAdmin && !S.preview;
   }
   async function loadIdees() {
-    const r = await sb.rpc('idees_liste');
-    if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes) }));
+    const [r, au] = await Promise.all([sb.rpc('idees_liste'), sb.from('idees').select('id,auteur')]);
+    const noms = new Map((au.data || []).map((x) => [x.id, x.auteur]));
+    if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
     try { await Promise.all([loadPublic(), loadPrivate(), loadIdees()]); S.loadError = false; }
@@ -255,16 +256,18 @@
       el('p', { class: 'meta', text: S.user.email }),
       el('button', { type: 'button', class: 'btn', text: 'Changer mon mot de passe', onclick: openNewPassword }),
       S.realAdmin ? el('button', { type: 'button', class: 'btn', text: 'Passer en mode invité', onclick: () => { closeSheet(); setPreview(true); } }) : null,
-      el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Tes idées, tes avis et tes votes restent, sans ton nom, pour aider la communauté. Elle est définitive.' }), del));
+      el('p', { class: 'meta', text: 'La suppression efface ta liste, tes sorties et tes coups de cœur. Tes idées, tes avis et tes votes restent, avec le pseudo que tu as choisi, pour aider la communauté. Elle est définitive.' }), del));
   }
   function openReport(c) {
     if (needLogin('Connecte-toi pour donner ton avis.')) return;
     const err = el('p', { class: 'err', role: 'alert' });
     const motif = el('textarea', { name: 'motif', rows: '3', maxlength: '500', required: true, placeholder: 'Ton avis sur ce resto, ou une correction : adresse fausse, resto fermé, demande de retrait…' });
-    const form = el('form', {}, el('p', { class: 'meta', text: c.nom }), field('Ton avis', motif), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer mon avis' }));
+    const pseudo = inp('pseudo', { req: true, min: 2, max: 30, value: savedPseudo(), ph: 'Ton pseudo' });
+    const form = el('form', {}, el('p', { class: 'meta', text: c.nom }), field('Ton avis', motif), field('Pseudo', pseudo), el('p', { class: 'meta', text: PSEUDO_NOTE }), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer mon avis' }));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const r = await sb.from('signalements').insert({ resto_id: c.id, motif: motif.value.trim() });
+      savePseudo(pseudo.value.trim());
+      const r = await sb.from('signalements').insert({ resto_id: c.id, motif: motif.value.trim(), auteur: pseudo.value.trim() });
       if (r.error) { err.textContent = 'Envoi impossible (3 caractères minimum).'; return; }
       closeSheet(); toast('Avis envoyé, merci');
     });
@@ -272,6 +275,9 @@
   }
 
   /* ---------- idées d’amélioration ---------- */
+  const PSEUDO_NOTE = 'Ce pseudo sera affiché avec ta contribution et conservé même si tu supprimes ton compte. N’utilise pas ton e-mail.';
+  const savedPseudo = () => { try { return localStorage.getItem('pr-pseudo') || ''; } catch (e) { return ''; } };
+  const savePseudo = (p) => { try { localStorage.setItem('pr-pseudo', p); } catch (e) { /* ignoré */ } };
   const IDEE_STATUTS = { proposee: 'Proposée', prevue: 'Prévue', encours: 'En cours', faite: 'Faite', refusee: 'Refusée' };
   async function toggleVote(i) {
     if (needLogin('Connecte-toi pour voter.')) return;
@@ -299,7 +305,7 @@
       i.detail ? el('p', { class: 'note', text: i.detail }) : null,
       el('div', { class: 'badges' },
         el('span', { class: 'badge' + (i.statut === 'proposee' ? ' ex' : ''), text: IDEE_STATUTS[i.statut] || i.statut }),
-        el('span', { class: 'meta', text: new Date(i.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) }),
+        el('span', { class: 'meta', text: 'par ' + (i.auteur || 'l’équipe') + ' · ' + new Date(i.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) }),
         i.mine ? el('span', { class: 'badge ex', text: 'Mon idée' }) : null),
       sel || (i.mine || S.isAdmin) ? el('div', { class: 'actions' }, sel, (i.mine || S.isAdmin) ? armedButton('Supprimer', 'Confirmer ?', () => removeIdee(i)) : null) : null);
   }
@@ -317,10 +323,12 @@
     const err = el('p', { class: 'err', role: 'alert' });
     const titre = inp('titre', { req: true, min: 3, max: 80, ph: 'Ex. Voir les restos sur une carte' });
     const detail = el('textarea', { name: 'detail', rows: '3', maxlength: '500', placeholder: 'Explique en quelques mots (facultatif)' });
-    const form = el('form', {}, field('Ton idée', titre), field('Détails', detail), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Proposer' }));
+    const pseudo = inp('pseudo', { req: true, min: 2, max: 30, value: savedPseudo(), ph: 'Ton pseudo' });
+    const form = el('form', {}, field('Ton idée', titre), field('Détails', detail), field('Pseudo affiché', pseudo), el('p', { class: 'meta', text: PSEUDO_NOTE }), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Proposer' }));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const r = await sb.from('idees').insert({ titre: titre.value.trim(), detail: detail.value.trim() || null });
+      savePseudo(pseudo.value.trim());
+      const r = await sb.from('idees').insert({ titre: titre.value.trim(), detail: detail.value.trim() || null, auteur: pseudo.value.trim() });
       if (r.error) { err.textContent = /limite_idees/.test(r.error.message || '') ? 'Tu as déjà proposé 3 idées aujourd’hui. Reviens demain !' : 'Envoi impossible (3 caractères minimum).'; return; }
       closeSheet(); toast('Idée envoyée, merci !'); await loadIdees(); renderIdees();
     });
@@ -359,7 +367,7 @@
     if (!S.isAdmin) return;
     const [s, g, j] = await Promise.all([
       sb.rpc('stats_admin'),
-      sb.from('signalements').select('id,created_at,motif,resto_id,traite').eq('traite', false).order('created_at', { ascending: false }),
+      sb.from('signalements').select('id,created_at,motif,resto_id,traite,auteur').eq('traite', false).order('created_at', { ascending: false }),
       sb.from('journal').select('at,email,action,cible,detail').order('at', { ascending: false }).limit(100)
     ]);
     const d = s.data || {};
@@ -369,7 +377,7 @@
     sg.replaceChildren(...(sigs.length ? sigs.map((x) => {
       const r = S.catalogue.find((c) => c.id === x.resto_id);
       return el('article', { class: 'card' }, el('h3', { class: 'card-name', text: r ? r.nom : 'Fiche supprimée' }), el('p', { class: 'note', text: x.motif }),
-        el('p', { class: 'meta', text: new Date(x.created_at).toLocaleString('fr-FR') }),
+        el('p', { class: 'meta', text: 'par ' + (x.auteur || 'anonyme') + ' · ' + new Date(x.created_at).toLocaleString('fr-FR') }),
         el('button', { type: 'button', class: 'btn', text: 'Marquer traité', onclick: async () => { await sb.from('signalements').update({ traite: true }).eq('id', x.id); renderAdmin(); } }));
     }) : [el('p', { class: 'meta', text: 'Aucun avis.' })]));
     lg.replaceChildren(...((j.data || []).map((x) => el('p', { class: 'log-line' },
