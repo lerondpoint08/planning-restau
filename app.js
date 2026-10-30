@@ -473,7 +473,7 @@
         mine ? el('span', { class: 'badge', text: 'Dans mes restos ✓' })
           : el('button', { type: 'button', class: 'btn primary', text: 'Ajouter à mes restos', onclick: () => addFromCatalogue(c) }),
         mine && miRow ? el('button', { type: 'button', class: 'btn', text: 'Planifier', onclick: () => openPlan({ miId: miRow.id }) }) : null,
-        el('button', { type: 'button', class: 'btn', 'aria-pressed': String(loved), text: (loved ? '♥ ' : '♡ ') + 'J’aime' + (nb ? ' · ' + nb : ''), onclick: () => toggleLove(c) }),
+        el('button', { type: 'button', class: 'btn vote', 'aria-pressed': String(loved), 'aria-label': 'J’aime', text: (loved ? '♥' : '♡') + (nb ? ' ' + nb : ''), onclick: () => toggleLove(c) }),
         el('button', { type: 'button', class: 'btn ghost', text: 'Avis', onclick: () => openReport(c) }),
         S.isAdmin ? [
           el('button', { type: 'button', class: 'btn ghost', text: 'Modifier', onclick: () => openRestoForm('catalogue', c) }),
