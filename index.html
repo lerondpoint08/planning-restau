@@ -33,6 +33,7 @@
     <button class="tab" id="tab-decouvrir" role="tab" aria-selected="true">Découvrir</button>
     <button class="tab" id="tab-liste" role="tab" aria-selected="false">Mes restos</button>
     <button class="tab" id="tab-plan" role="tab" aria-selected="false">Planning</button>
+    <button class="tab" id="tab-idees" role="tab" aria-selected="false">Idées</button>
     <button class="tab" id="tab-news" role="tab" aria-selected="false" hidden>Nouveautés</button>
     <button class="tab" id="tab-admin" role="tab" aria-selected="false" hidden>Admin</button>
   </nav>
@@ -90,6 +91,16 @@
         <button type="button" class="icon-btn" id="wk-next" aria-label="Semaine suivante">›</button>
       </div>
       <div class="list" id="planOut"></div>
+    </section>
+
+    <section id="view-idees" hidden>
+      <p class="meta idees-intro">Propose une amélioration et vote avec un cœur pour celles que tu aimerais voir arriver. Les plus aimées passent en premier.</p>
+      <div class="seg" id="seg-idees" role="group" aria-label="Tri">
+        <button type="button" data-isort="top" aria-pressed="true" id="is-top">Populaires</button>
+        <button type="button" data-isort="new" aria-pressed="false" id="is-new">Récentes</button>
+      </div>
+      <div class="chips" id="ideeChips"></div>
+      <div class="list" id="ideeOut"></div>
     </section>
 
     <section id="view-news" hidden>

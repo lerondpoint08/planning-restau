@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -153,8 +153,12 @@
     S.loves = new Set((l.data || []).map((x) => x.resto_id));
     S.realAdmin = a.data === true; S.isAdmin = S.realAdmin && !S.preview;
   }
+  async function loadIdees() {
+    const r = await sb.rpc('idees_liste');
+    if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes) }));
+  }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
     S.ready = true; render();
   }
@@ -183,7 +187,7 @@
       const email = inp('email', { type: 'email', req: true, ac: 'email', ph: 'toi@exemple.fr' });
       const pass = inp('password', { type: 'password', req: true, min: 6, ac: signup ? 'new-password' : 'current-password', ph: '6 caractères minimum' });
       const submit = el('button', { type: 'submit', class: 'btn primary big', text: signup ? 'Créer mon compte' : 'Me connecter' });
-      const form = el('form', {}, why ? el('p', { class: 'meta', text: why }) : null, field('E-mail', email), field('Mot de passe', pass), err, submit);
+      const form = el('form', {}, field('E-mail', email), field('Mot de passe', pass), err, submit);
       form.addEventListener('submit', async (e) => {
         e.preventDefault(); err.textContent = ''; submit.disabled = true;
         try {
@@ -218,7 +222,7 @@
         const r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin + location.pathname } });
         if (r.error) err.textContent = 'Connexion Google indisponible pour le moment.';
       } });
-      return [google, el('p', { class: 'meta', text: 'ou avec ton e-mail' }), form, forgot, swap];
+      return [why ? el('p', { class: 'meta', text: why }) : null, google, el('p', { class: 'meta', text: 'ou avec ton e-mail' }), form, forgot, swap];
     }
     body.append(...build());
     openSheet(signup ? 'Créer un compte' : 'Connexion', body, 'input[name="email"]');
@@ -265,6 +269,62 @@
       closeSheet(); toast('Avis envoyé, merci');
     });
     openSheet('Donner un avis', form, 'textarea');
+  }
+
+  /* ---------- idées d’amélioration ---------- */
+  const IDEE_STATUTS = { proposee: 'Proposée', prevue: 'Prévue', encours: 'En cours', faite: 'Faite', refusee: 'Refusée' };
+  async function toggleVote(i) {
+    if (needLogin('Connecte-toi pour voter.')) return;
+    const on = !i.mon_vote;
+    i.mon_vote = on; i.votes += on ? 1 : -1; renderIdees();
+    const r = on ? await sb.from('idees_votes').insert({ idee_id: i.id }) : await sb.from('idees_votes').delete().eq('idee_id', i.id).eq('user_id', S.user.id);
+    if (r.error && !/duplicate/i.test(r.error.message || '')) { toast('Vote impossible'); await loadIdees(); renderIdees(); }
+  }
+  async function setIdeeStatut(i, statut) {
+    const r = await sb.from('idees').update({ statut }).eq('id', i.id);
+    if (r.error) { toast('Changement impossible'); return; }
+    i.statut = statut; renderIdees(); toast('Statut : ' + IDEE_STATUTS[statut]);
+  }
+  async function removeIdee(i) {
+    const r = await sb.from('idees').delete().eq('id', i.id);
+    if (r.error) { toast('Suppression impossible'); return; }
+    S.idees = S.idees.filter((x) => x.id !== i.id); renderIdees(); toast('Idée supprimée');
+  }
+  function ideeCard(i) {
+    const sel = S.isAdmin ? el('select', { 'aria-label': 'Statut', onchange: (e) => setIdeeStatut(i, e.target.value) },
+      Object.entries(IDEE_STATUTS).map(([v, l]) => el('option', { value: v, selected: v === i.statut, text: l }))) : null;
+    return el('article', { class: 'card idee' },
+      el('div', { class: 'card-top' }, el('h3', { class: 'card-name', text: i.titre }),
+        el('button', { type: 'button', class: 'btn vote', 'aria-pressed': String(!!i.mon_vote), 'aria-label': 'J’aime cette idée', text: (i.mon_vote ? '♥ ' : '♡ ') + i.votes, onclick: () => toggleVote(i) })),
+      i.detail ? el('p', { class: 'note', text: i.detail }) : null,
+      el('div', { class: 'badges' },
+        el('span', { class: 'badge' + (i.statut === 'proposee' ? ' ex' : ''), text: IDEE_STATUTS[i.statut] || i.statut }),
+        el('span', { class: 'meta', text: new Date(i.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) }),
+        i.mine ? el('span', { class: 'badge ex', text: 'Mon idée' }) : null),
+      sel || (i.mine || S.isAdmin) ? el('div', { class: 'actions' }, sel, (i.mine || S.isAdmin) ? armedButton('Supprimer', 'Confirmer ?', () => removeIdee(i)) : null) : null);
+  }
+  function renderIdees() {
+    $('is-top').setAttribute('aria-pressed', String(S.ideeSort === 'top')); $('is-new').setAttribute('aria-pressed', String(S.ideeSort === 'new'));
+    const chips = $('ideeChips'); chips.replaceChildren();
+    const opts = [['', 'Toutes'], ['proposee', 'Proposées'], ['prevue', 'Prévues'], ['encours', 'En cours'], ['faite', 'Faites']];
+    opts.forEach(([v, l]) => chips.append(el('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.ideeFilter === v), text: l, onclick: () => { S.ideeFilter = v; renderIdees(); } })));
+    let rows = S.idees.filter((i) => S.ideeFilter ? i.statut === S.ideeFilter : i.statut !== 'refusee' || S.isAdmin);
+    rows.sort(S.ideeSort === 'top' ? (x, y) => y.votes - x.votes || new Date(y.created_at) - new Date(x.created_at) : (x, y) => new Date(y.created_at) - new Date(x.created_at));
+    $('ideeOut').replaceChildren(...(rows.length ? rows.map(ideeCard) : [el('p', { class: 'meta', text: 'Aucune idée ici pour le moment. Propose la première !' })]));
+  }
+  function openIdeeForm() {
+    if (needLogin('Connecte-toi pour proposer une idée.')) return;
+    const err = el('p', { class: 'err', role: 'alert' });
+    const titre = inp('titre', { req: true, min: 3, max: 80, ph: 'Ex. Voir les restos sur une carte' });
+    const detail = el('textarea', { name: 'detail', rows: '3', maxlength: '500', placeholder: 'Explique en quelques mots (facultatif)' });
+    const form = el('form', {}, field('Ton idée', titre), field('Détails', detail), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Proposer' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await sb.from('idees').insert({ titre: titre.value.trim(), detail: detail.value.trim() || null });
+      if (r.error) { err.textContent = /limite_idees/.test(r.error.message || '') ? 'Tu as déjà proposé 3 idées aujourd’hui. Reviens demain !' : 'Envoi impossible (3 caractères minimum).'; return; }
+      closeSheet(); toast('Idée envoyée, merci !'); await loadIdees(); renderIdees();
+    });
+    openSheet('Proposer une idée', form, 'input[name="titre"]');
   }
 
   /* ---------- nouveautés du jour (admin) ---------- */
@@ -817,15 +877,15 @@
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
     $('previewBar').hidden = !(S.realAdmin && S.preview);
     $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
-    ['decouvrir', 'liste', 'plan', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news';
+    ['decouvrir', 'liste', 'plan', 'idees', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcomeSignup').hidden = !!S.user;
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
-    const fabMode = (S.tab === 'admin' || S.tab === 'news') ? '' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
+    const fabMode = (S.tab === 'admin' || S.tab === 'news') ? '' : S.tab === 'idees' ? 'idee' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
     $('fab').hidden = !fabMode; $('fab').dataset.mode = fabMode;
-    $('fabLabel').textContent = { plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
+    $('fabLabel').textContent = { idee: 'Proposer une idée', plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
     $('summary').textContent = !S.ready ? 'Chargement…' : S.loadError ? 'Connexion impossible pour le moment'
       : S.user ? nAT + ' à tester · ' + nUp + (nUp > 1 ? ' sorties' : ' sortie') + ' à venir'
       : S.catalogue.filter((c) => !c.masque).length + ' restos à découvrir';
@@ -833,7 +893,7 @@
   function render() {
     renderUser(); renderChrome();
     if (S.tab === 'decouvrir') { if (S.sub === 'restos') renderCatalogue(); else renderCreators(); }
-    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else renderPlan();
+    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else if (S.tab === 'idees') renderIdees(); else renderPlan();
   }
   function setTab(t) { S.tab = t; try { localStorage.setItem('pr-tab', t); } catch (e) { /* ignoré */ } render(); window.scrollTo(0, 0); }
 
@@ -846,6 +906,8 @@
   $('previewOff').addEventListener('click', () => setPreview(false));
   $('tab-admin').addEventListener('click', () => setTab('admin'));
   $('tab-news').addEventListener('click', () => setTab('news'));
+  $('tab-idees').addEventListener('click', () => setTab('idees'));
+  $('seg-idees').addEventListener('click', (e) => { const b = e.target.closest('button[data-isort]'); if (b) { S.ideeSort = b.dataset.isort; renderIdees(); } });
   $('nw-prev').addEventListener('click', () => { S.newsOffset -= 1; render(); });
   $('nw-next').addEventListener('click', () => { if (S.newsOffset < 0) { S.newsOffset += 1; render(); } });
   $('seg-sub').addEventListener('click', (e) => { const b = e.target.closest('button[data-sub]'); if (b) { S.sub = b.dataset.sub; render(); } });
@@ -862,7 +924,7 @@
   $('fab').addEventListener('click', () => {
     const m = $('fab').dataset.mode;
     if (m === 'plan') openPlan({}); else if (m === 'liste') openRestoForm('perso'); else if (m === 'cat') openRestoForm('catalogue');
-    else if (m === 'item') { const c = myCreateur(); if (c) openItemForm(c); }
+    else if (m === 'idee') openIdeeForm(); else if (m === 'item') { const c = myCreateur(); if (c) openItemForm(c); }
   });
   $('sheetClose').addEventListener('click', closeSheet);
   $('ov').addEventListener('click', (e) => { if (e.target === $('ov')) closeSheet(); });
