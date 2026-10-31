@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, infos: null, cinfos: [], resumes: {}, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, groupes: [], infos: null, cinfos: [], resumes: {}, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -159,7 +159,7 @@
     if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites(), loadInfos()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites(), loadInfos(), loadGroupes()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
     S.ready = true; render(); handleInvite();
   }
@@ -335,6 +335,97 @@
     openSheet('Proposer une idée', form, 'input[name="titre"]');
   }
 
+  /* ---------- groupes ---------- */
+  async function loadGroupes() {
+    if (!S.user) { S.groupes = []; return; }
+    const r = await sb.rpc('groupes_liste');
+    S.groupes = r.error ? [] : (r.data || []);
+  }
+  async function groupAction(fn, args, msg, keepOpen) {
+    const r = await sb.rpc(fn, args);
+    if (r.error) { toast(/pas_chef/.test(r.error.message || '') ? 'Réservé au chef du groupe' : 'Action impossible'); return false; }
+    await loadGroupes(); render(); if (msg) toast(msg); if (!keepOpen) closeSheet();
+    return true;
+  }
+  const contactsAmis = () => S.contacts.filter((c) => c.sens === 'contact');
+  function openGroupCreate() {
+    const amis = contactsAmis();
+    if (!amis.length) { toast('Ajoute d’abord des contacts.'); return; }
+    const err = el('p', { class: 'err', role: 'alert' });
+    const nom = inp('nom', { req: true, min: 2, max: 40, ph: 'Ex. Les copains du jeudi' });
+    const form = el('form', {}, field('Nom du groupe', nom),
+      el('p', { class: 'meta', text: 'Qui ajouter ? (tu pourras en ajouter d’autres plus tard)' }),
+      el('div', { class: 'opts' }, amis.map((c) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', value: c.id }), el('span', { text: c.pseudo })))),
+      el('p', { class: 'meta', text: 'Tu seras le chef du groupe. Chaque membre verra la liste des membres et peut quitter quand il veut.' }), err,
+      el('button', { type: 'submit', class: 'btn primary big', text: 'Créer le groupe' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ids = [...form.querySelectorAll('input:checked')].map((i) => i.value);
+      const r = await sb.rpc('creer_groupe', { p_nom: nom.value.trim(), p_contacts: ids });
+      if (r.error) { err.textContent = /trop_de_groupes/.test(r.error.message || '') ? 'Tu as déjà 10 groupes.' : 'Création impossible (2 à 40 caractères).'; return; }
+      closeSheet(); toast('Groupe créé'); await loadGroupes(); render();
+    });
+    openSheet('Nouveau groupe', form, 'input[name="nom"]');
+  }
+  function openGroupFree(g) {
+    const out = el('div', { class: 'stack' });
+    const date = inp('date', { type: 'date', req: true, value: todayKey() });
+    const form = el('form', {}, field('Date', date),
+      el('fieldset', { class: 'field' }, el('legend', { text: 'Moment' }), radios('creneau', [['brunch', 'Brunch'], ['midi', 'Midi'], ['soir', 'Soir']], 'soir')),
+      el('button', { type: 'submit', class: 'btn primary big', text: 'Voir qui est libre' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const r = await sb.rpc('groupe_dispos', { p_groupe: g.id, p_date: date.value, p_creneau: radioVal(form, 'creneau') || 'soir' });
+      if (r.error) { out.replaceChildren(el('p', { class: 'err', text: 'Impossible pour le moment.' })); return; }
+      out.replaceChildren(...(r.data || []).map((m) => el('p', { class: 'log-line', text: (m.libre === true ? '✓ ' : m.libre === false ? '✗ ' : '? ') + m.pseudo + (m.libre === true ? ' · libre' : m.libre === false ? ' · pas libre' : ' · inconnu') })),
+        el('p', { class: 'meta', text: '« Inconnu » : la personne n’a pas renseigné ses disponibilités ou n’est pas dans tes contacts.' }));
+    });
+    openSheet('Qui est libre ? · ' + g.nom, el('div', { class: 'stack' }, form, out));
+  }
+  function openGroupManage(g) {
+    const body = el('div', { class: 'stack' });
+    const nom = inp('nom', { req: true, min: 2, max: 40, value: g.nom });
+    const ren = el('form', {}, field('Nom du groupe', nom), el('button', { type: 'submit', class: 'btn', text: 'Renommer' }));
+    ren.addEventListener('submit', (e) => { e.preventDefault(); groupAction('renommer_groupe', { p_groupe: g.id, p_nom: nom.value.trim() }, 'Groupe renommé'); });
+    body.append(ren, el('h3', { class: 'sec-title', text: 'Membres' }));
+    g.membres.forEach((m) => {
+      body.append(el('div', { class: 'card' }, el('div', { class: 'card-top' }, el('h3', { class: 'card-name', text: m.pseudo + (m.chef ? ' · chef' : '') + (m.moi ? ' (toi)' : '') })),
+        m.chef ? null : el('div', { class: 'actions' },
+          armedButton('Céder le rôle de chef', 'Confirmer ?', () => groupAction('ceder_chef', { p_membre: m.id }, m.pseudo + ' est maintenant chef')),
+          armedButton('Retirer', 'Confirmer ?', () => groupAction('retirer_membre', { p_membre: m.id }, m.pseudo + ' retiré du groupe')))));
+    });
+    const deja = new Set(g.membres.map((m) => m.pseudo));
+    const dispo = contactsAmis().filter((c) => !deja.has(c.pseudo));
+    if (dispo.length) {
+      const add = el('form', {}, el('h3', { class: 'sec-title', text: 'Ajouter des membres' }),
+        el('div', { class: 'opts' }, dispo.map((c) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', value: c.id }), el('span', { text: c.pseudo })))),
+        el('button', { type: 'submit', class: 'btn', text: 'Ajouter' }));
+      add.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const ids = [...add.querySelectorAll('input:checked')].map((i) => i.value);
+        if (ids.length) groupAction('ajouter_membres', { p_groupe: g.id, p_contacts: ids }, 'Membres ajoutés');
+      });
+      body.append(add);
+    }
+    const suivant = g.membres.filter((m) => !m.chef)[0];
+    body.append(el('h3', { class: 'sec-title', text: 'Quitter ou supprimer' }),
+      el('p', { class: 'meta', text: suivant ? 'Si tu quittes le groupe, le membre le plus ancien devient chef.' : 'Tu es seul dans ce groupe : le quitter le supprime.' }),
+      armedButton('Quitter le groupe', 'Confirmer ?', () => groupAction('quitter_groupe', { p_groupe: g.id }, 'Tu as quitté le groupe')),
+      armedButton('Supprimer le groupe', 'Confirmer ?', () => groupAction('supprimer_groupe', { p_groupe: g.id }, 'Groupe supprimé')));
+    openSheet('Gérer · ' + g.nom, body);
+  }
+  function groupCard(g) {
+    const chef = g.membres.find((m) => m.chef);
+    return el('div', { class: 'card' },
+      el('div', { class: 'card-top' }, el('h3', { class: 'card-name', text: g.nom }), el('span', { class: 'meta', text: g.membres.length + ' membre' + (g.membres.length > 1 ? 's' : '') })),
+      el('p', { class: 'meta', text: 'Chef : ' + (g.suis_chef ? 'toi' : (chef ? chef.pseudo : '—')) }),
+      el('div', { class: 'guests' }, g.membres.map((m) => el('span', { class: 'guest', text: (m.chef ? '★ ' : '') + m.pseudo + (m.moi ? ' (toi)' : '') }))),
+      el('div', { class: 'actions' },
+        g.suis_chef ? [el('button', { type: 'button', class: 'btn', text: 'Qui est libre ?', onclick: () => openGroupFree(g) }),
+          el('button', { type: 'button', class: 'btn', text: 'Gérer', onclick: () => openGroupManage(g) })]
+          : armedButton('Quitter', 'Confirmer ?', () => groupAction('quitter_groupe', { p_groupe: g.id }, 'Tu as quitté le groupe'))));
+  }
+
   /* ---------- disponibilités et préférences ---------- */
   const REGIMES = { vegetarien: 'Végétarien', vegan: 'Végan', sans_porc: 'Sans porc', halal: 'Halal', casher: 'Casher', sans_gluten: 'Sans gluten', sans_lactose: 'Sans lactose', pescetarien: 'Pescétarien' };
   const ALLERGIES = { arachides: 'Arachides', fruits_a_coque: 'Fruits à coque', oeufs: 'Œufs', lait: 'Lait', poisson: 'Poisson', crustaces: 'Crustacés', soja: 'Soja', sesame: 'Sésame', celeri: 'Céleri', moutarde: 'Moutarde' };
@@ -452,7 +543,8 @@
   function openInvite(s) {
     const deja = new Set(S.guests.filter((g) => g.sortie_id === s.id).map((g) => g.pseudo));
     const dispo = S.contacts.filter((c) => c.sens === 'contact' && !deja.has(c.pseudo));
-    if (!dispo.length) {
+    const mesGroupes = S.groupes.filter((g) => g.suis_chef && g.membres.length > 1);
+    if (!dispo.length && !mesGroupes.length) {
       openSheet('Inviter des contacts', el('div', { class: 'stack' },
         el('p', { class: 'meta', text: S.contacts.some((c) => c.sens === 'contact') ? 'Tous tes contacts sont déjà invités à cette sortie.' : 'Tu n’as pas encore de contact. Partage ton lien depuis l’onglet Contacts.' }),
         el('button', { type: 'button', class: 'btn primary big', text: 'Aller aux contacts', onclick: () => { closeSheet(); setTab('contacts'); } })));
@@ -465,16 +557,23 @@
         el('span', { text: c.pseudo + (l === true ? ' · libre à ce moment' : l === false ? ' · pas libre' : '') }));
     });
     const form = el('form', {}, el('p', { class: 'meta', text: 'Choisis qui inviter. Ils verront la date, le moment et le resto, et répondent « je viens » ou « je ne peux pas ».' }),
+      mesGroupes.length ? el('p', { class: 'meta', text: 'Groupes (tous les membres sont invités) :' }) : null,
+      mesGroupes.length ? el('div', { class: 'opts' }, mesGroupes.map((g) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', name: 'groupe', value: g.id }), el('span', { text: g.nom + ' (' + (g.membres.length - 1) + ')' })))) : null,
+      dispo.length ? el('p', { class: 'meta', text: 'Contacts :' }) : null,
       el('div', { class: 'opts' }, boxes), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer l’invitation' }));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const ids = [...form.querySelectorAll('input:checked')].map((i) => i.value);
-      if (!ids.length) { err.textContent = 'Choisis au moins un contact.'; return; }
-      const r = await sb.rpc('inviter_sortie', { p_sortie: s.id, p_contacts: ids });
+      const ids = [...form.querySelectorAll('input:checked:not([name="groupe"])')].map((i) => i.value);
+      const gids = [...form.querySelectorAll('input[name="groupe"]:checked')].map((i) => i.value);
+      if (!ids.length && !gids.length) { err.textContent = 'Choisis au moins un contact ou un groupe.'; return; }
+      const rs = [];
+      if (ids.length) rs.push(await sb.rpc('inviter_sortie', { p_sortie: s.id, p_contacts: ids }));
+      for (const gid of gids) rs.push(await sb.rpc('inviter_groupe', { p_sortie: s.id, p_groupe: gid }));
+      const r = { error: rs.find((x) => x.error) };
       if (r.error) { err.textContent = 'Envoi impossible. Réessaie dans un instant.'; return; }
       closeSheet(); toast('Invitation envoyée'); await loadInvites(); render();
     });
-    openSheet('Inviter des contacts', form);
+    openSheet('Inviter à la sortie', form);
   }
   function guestsBlock(s) {
     const gs = S.guests.filter((g) => g.sortie_id === s.id);
@@ -607,6 +706,10 @@
         if (ci && (ci.allergies || []).length) t.push('Allergies : ' + ci.allergies.map((k) => ALLERGIES[k]).join(', '));
         return t.length ? el('p', { class: 'meta contact-info', text: t.join(' · ') }) : null; })(),
       armedButton('Retirer', 'Confirmer ?', () => dropContact(c, 'Contact retiré'))])));
+    box.append(el('h2', { class: 'sec-title', text: 'Mes groupes (' + S.groupes.length + ')' }));
+    S.groupes.forEach((g) => box.append(groupCard(g)));
+    if (!S.groupes.length) box.append(el('p', { class: 'meta', text: 'Crée un groupe pour inviter plusieurs amis d’un coup.' }));
+    box.append(el('button', { type: 'button', class: 'btn', text: '+ Créer un groupe', onclick: openGroupCreate }));
   }
 
   /* ---------- nouveautés du jour (admin) ---------- */
@@ -1221,7 +1324,7 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('ov').hidden) closeSheet(); });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadInfos(), loadPrivate()]).then(render, () => {});
+    if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadInfos(), loadGroupes(), loadPrivate()]).then(render, () => {});
   });
 
   /* ---------- démarrage ---------- */
