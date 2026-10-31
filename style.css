@@ -236,3 +236,11 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .guest.non { text-decoration: line-through; color: var(--muted); }
 .guest .x { border: 0; background: transparent; color: var(--muted); font-size: 16px; min-width: 28px; min-height: 28px; border-radius: 50%; }
 .invitation { border-color: var(--accent); }
+
+.dispo-grid { width: 100%; border-collapse: collapse; font-size: 14px; }
+.dispo-grid th, .dispo-grid td { text-align: center; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.dispo-grid th:first-child { text-align: left; }
+.dispo-grid input[type="checkbox"] { width: 22px; height: 22px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.contact-info { flex-basis: 100%; margin: 0; }
+.opt.partage { align-items: flex-start; }

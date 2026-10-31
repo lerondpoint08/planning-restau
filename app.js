@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, infos: null, cinfos: [], resumes: {}, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -159,7 +159,7 @@
     if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites(), loadInfos()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
     S.ready = true; render(); handleInvite();
   }
@@ -335,6 +335,99 @@
     openSheet('Proposer une idée', form, 'input[name="titre"]');
   }
 
+  /* ---------- disponibilités et préférences ---------- */
+  const REGIMES = { vegetarien: 'Végétarien', vegan: 'Végan', sans_porc: 'Sans porc', halal: 'Halal', casher: 'Casher', sans_gluten: 'Sans gluten', sans_lactose: 'Sans lactose', pescetarien: 'Pescétarien' };
+  const ALLERGIES = { arachides: 'Arachides', fruits_a_coque: 'Fruits à coque', oeufs: 'Œufs', lait: 'Lait', poisson: 'Poisson', crustaces: 'Crustacés', soja: 'Soja', sesame: 'Sésame', celeri: 'Céleri', moutarde: 'Moutarde' };
+  const JOURS = [['lun', 'Lun'], ['mar', 'Mar'], ['mer', 'Mer'], ['jeu', 'Jeu'], ['ven', 'Ven'], ['sam', 'Sam'], ['dim', 'Dim']];
+  const JOUR_DE = ['dim', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam'];
+  async function loadInfos() {
+    if (!S.user) { S.infos = null; S.cinfos = []; return; }
+    const [m, c] = await Promise.all([sb.rpc('mon_infos'), sb.rpc('contacts_infos')]);
+    S.infos = !m.error && m.data && m.data.length ? m.data[0] : null;
+    S.cinfos = c.error ? [] : (c.data || []);
+  }
+  async function loadResumes() {
+    S.resumes = {};
+    if (!S.user) return;
+    const ids = [...new Set(S.guests.map((g) => g.sortie_id).concat(S.invitations.map((i) => i.sortie_id)))];
+    const rs = await Promise.all(ids.map((id) => sb.rpc('resume_groupe', { p_sortie: id })));
+    ids.forEach((id, k) => { if (!rs[k].error && rs[k].data) S.resumes[id] = rs[k].data; });
+  }
+  // libre ? true / false / null (inconnu)
+  function libreLe(ci, date, creneau) {
+    if (!ci) return null;
+    if ((ci.indispos || []).includes(date)) return false;
+    const d = ci.dispos || {};
+    if (!Object.keys(d).length) return null;
+    return (d[JOUR_DE[parseISO(date).getDay()]] || []).includes(creneau);
+  }
+  const listLabels = (obj, map) => Object.keys(obj).map((k) => map[k] + (obj[k] > 1 ? ' ×' + obj[k] : '')).join(', ');
+  function resumeLine(sortieId) {
+    const r = S.resumes[sortieId];
+    if (!r || !r.renseignes) return null;
+    const parts = [];
+    if (Object.keys(r.regimes).length) parts.push(listLabels(r.regimes, REGIMES));
+    if (Object.keys(r.allergies).length) parts.push('allergies : ' + listLabels(r.allergies, ALLERGIES));
+    if (!parts.length) return null;
+    return el('p', { class: 'meta', text: 'Dans le groupe (' + r.renseignes + '/' + r.personnes + ' ont renseigné) : ' + parts.join(' · ') + '. Préviens toujours le restaurant.' });
+  }
+  const dispoText = (d) => JOURS.filter(([k]) => (d[k] || []).length).map(([k, l]) => l + ' ' + d[k].map((c) => (CRENEAUX[c] || {}).label || c).join('/').toLowerCase()).join(', ');
+  function openInfosForm() {
+    const cur = S.infos || { regimes: [], allergies: [], cuisines: [], budget: null, dispos: {}, indispos: [], partage: false };
+    const err = el('p', { class: 'err', role: 'alert' });
+    let indispos = (cur.indispos || []).slice();
+    const check = (name, value, label, on) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', name, value, checked: on }), el('span', { text: label }));
+    const grid = el('table', { class: 'dispo-grid' },
+      el('thead', {}, el('tr', {}, el('th', {}), ['brunch', 'midi', 'soir'].map((c) => el('th', { text: CRENEAUX[c].label })))),
+      el('tbody', {}, JOURS.map(([k, l]) => el('tr', {}, el('th', { text: l }), ['brunch', 'midi', 'soir'].map((c) =>
+        el('td', {}, el('input', { type: 'checkbox', name: 'dispo', value: k + ':' + c, checked: ((cur.dispos || {})[k] || []).includes(c), 'aria-label': l + ' ' + CRENEAUX[c].label })))))));
+    const indList = el('div', { class: 'guests' });
+    const drawInd = () => indList.replaceChildren(...indispos.sort().map((d) => el('span', { class: 'guest', text: '' }, cap(fmtShort.format(parseISO(d))),
+      el('button', { type: 'button', class: 'x', 'aria-label': 'Retirer ' + d, text: '×', onclick: () => { indispos = indispos.filter((x) => x !== d); drawInd(); } }))));
+    drawInd();
+    const indDate = el('input', { type: 'date', min: todayKey(), 'aria-label': 'Date non disponible' });
+    const addInd = el('button', { type: 'button', class: 'btn', text: 'Ajouter', onclick: () => { if (indDate.value && !indispos.includes(indDate.value) && indispos.length < 60) { indispos.push(indDate.value); drawInd(); } indDate.value = ''; } });
+    const budget = radios('budget', [['', 'Peu importe'], ['1', '€'], ['2', '€€'], ['3', '€€€']], cur.budget || '');
+    const partage = el('input', { type: 'checkbox', name: 'partage', checked: !!cur.partage });
+    const form = el('form', { class: 'stack' },
+      el('h3', { class: 'sec-title', text: 'Mes disponibilités' }),
+      el('p', { class: 'meta', text: 'Coche les moments où tu es en général libre. Tes contacts les voient quand ils t’invitent.' }), grid,
+      el('p', { class: 'meta', text: 'Pas libre à une date précise :' }), el('div', { class: 'row' }, indDate, addInd), indList,
+      el('h3', { class: 'sec-title', text: 'Régime alimentaire' }), el('div', { class: 'opts' }, Object.entries(REGIMES).map(([k, l]) => check('regime', k, l, (cur.regimes || []).includes(k)))),
+      el('h3', { class: 'sec-title', text: 'Allergies' }), el('div', { class: 'opts' }, Object.entries(ALLERGIES).map(([k, l]) => check('allergie', k, l, (cur.allergies || []).includes(k)))),
+      el('p', { class: 'meta', text: 'Ce site n’est pas un avis médical : préviens toujours le restaurant en cas d’allergie.' }),
+      el('h3', { class: 'sec-title', text: 'Mes goûts' }), el('div', { class: 'opts' }, BASE_CUISINES.map((c) => check('cuisine', c, c, (cur.cuisines || []).includes(c)))),
+      el('fieldset', { class: 'field' }, el('legend', { text: 'Budget habituel' }), budget),
+      el('label', { class: 'opt partage' }, partage, el('span', { text: 'Partager mes régimes, allergies et goûts avec mes contacts, et dans le résumé anonyme des sorties où je suis invité. Sinon, personne ne les voit.' })),
+      err, el('button', { type: 'submit', class: 'btn primary big', text: 'Enregistrer' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault(); err.textContent = '';
+      const vals = (n) => [...form.querySelectorAll('input[name="' + n + '"]:checked')].map((i) => i.value);
+      const dispos = {};
+      vals('dispo').forEach((v) => { const [j, c] = v.split(':'); (dispos[j] = dispos[j] || []).push(c); });
+      const cuis = vals('cuisine');
+      if (cuis.length > 8) { err.textContent = 'Choisis 8 goûts au maximum.'; return; }
+      const b = radioVal(form, 'budget');
+      const r = await sb.rpc('definir_infos', { p_regimes: vals('regime'), p_allergies: vals('allergie'), p_cuisines: cuis, p_budget: b ? Number(b) : null, p_dispos: dispos, p_indispos: indispos, p_partage: partage.checked });
+      if (r.error) { err.textContent = 'Enregistrement impossible. Réessaie dans un instant.'; return; }
+      closeSheet(); toast('Profil enregistré'); await loadInfos(); render();
+    });
+    openSheet('Mon profil de sortie', form);
+  }
+  function infosCard() {
+    const i = S.infos, bits = [];
+    if (i) {
+      if (Object.keys(i.dispos || {}).length) bits.push('Libre : ' + dispoText(i.dispos));
+      if ((i.regimes || []).length) bits.push(i.regimes.map((k) => REGIMES[k]).join(', '));
+      if ((i.allergies || []).length) bits.push('Allergies : ' + i.allergies.map((k) => ALLERGIES[k]).join(', '));
+    }
+    return el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Mon profil de sortie' }),
+      el('p', { class: 'note', text: bits.length ? bits.join(' · ') : 'Indique tes disponibilités et tes préférences (végétarien, allergies…) pour que tes amis organisent des sorties qui te conviennent.' }),
+      i && !i.partage && ((i.regimes || []).length || (i.allergies || []).length) ? el('p', { class: 'meta', text: 'Régimes et allergies : privés pour l’instant.' }) : null,
+      el('p', { class: 'meta', text: 'Tes disponibilités sont visibles de tes contacts.' }),
+      el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn primary', text: bits.length ? 'Modifier' : 'Renseigner', onclick: openInfosForm })));
+  }
+
   /* ---------- invitations de sorties ---------- */
   const ST_LABEL = { oui: 'vient', non: 'ne vient pas', en_attente: 'en attente' };
   async function loadInvites() {
@@ -342,6 +435,7 @@
     const [i, g] = await Promise.all([sb.rpc('invitations_liste'), sb.rpc('participants_mes_sorties')]);
     S.invitations = i.error ? [] : (i.data || []);
     S.guests = g.error ? [] : (g.data || []);
+    await loadResumes();
   }
   const invPending = () => S.invitations.filter((x) => x.statut === 'en_attente' && x.date >= todayKey());
   const invAccepted = () => S.invitations.filter((x) => x.statut === 'oui' && x.date >= todayKey()).map((x) => ({ ...x, _inv: true, id: x.sortie_id }));
@@ -365,7 +459,11 @@
       return;
     }
     const err = el('p', { class: 'err', role: 'alert' });
-    const boxes = dispo.map((c) => el('label', { class: 'opt' }, el('input', { type: 'checkbox', value: c.id }), el('span', { text: c.pseudo })));
+    const boxes = dispo.map((c) => {
+      const l = libreLe(S.cinfos.find((x) => x.contact_id === c.id), s.date, s.creneau);
+      return el('label', { class: 'opt' }, el('input', { type: 'checkbox', value: c.id }),
+        el('span', { text: c.pseudo + (l === true ? ' · libre à ce moment' : l === false ? ' · pas libre' : '') }));
+    });
     const form = el('form', {}, el('p', { class: 'meta', text: 'Choisis qui inviter. Ils verront la date, le moment et le resto, et répondent « je viens » ou « je ne peux pas ».' }),
       el('div', { class: 'opts' }, boxes), err, el('button', { type: 'submit', class: 'btn primary big', text: 'Envoyer l’invitation' }));
     form.addEventListener('submit', async (e) => {
@@ -404,6 +502,7 @@
         r.cuisine ? el('p', { class: 'meta', text: r.cuisine }) : null,
         addressBlock(r),
         autres.length ? el('p', { class: 'meta', text: 'Viennent : ' + autres.join(', ') }) : null,
+        resumeLine(inv.sortie_id),
         el('div', { class: 'sortie-actions' }, (r.adresse || r.ville) ? el('a', { class: 'link', href: mapsUrl(r), target: '_blank', rel: 'noopener noreferrer', text: 'Itinéraire' }) : null),
         el('div', { class: 'sortie-actions' }, actions)));
   }
@@ -481,6 +580,7 @@
           el('button', { type: 'button', class: 'btn', text: 'S’inscrire', onclick: () => openAuth('signup') }))));
       return;
     }
+    box.append(infosCard());
     if (!S.profil) {
       box.append(el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Choisis ton pseudo' }),
         el('p', { class: 'note', text: 'C’est le nom que tes contacts verront. Tu en as besoin pour envoyer ou recevoir des demandes.' }),
@@ -501,6 +601,11 @@
     box.append(...sect('Demandes envoyées', env, 'Aucune demande envoyée.', (c) => contactRow(c, [
       el('span', { class: 'badge ex', text: 'En attente' }), armedButton('Annuler', 'Confirmer ?', () => dropContact(c, 'Demande annulée'))])));
     box.append(...sect('Mes contacts', ok, 'Pas encore de contact. Partage ton lien !', (c) => contactRow(c, [
+      (() => { const ci = S.cinfos.find((x) => x.contact_id === c.id); const t = [];
+        if (ci && Object.keys(ci.dispos || {}).length) t.push('Libre : ' + dispoText(ci.dispos));
+        if (ci && (ci.regimes || []).length) t.push(ci.regimes.map((k) => REGIMES[k]).join(', '));
+        if (ci && (ci.allergies || []).length) t.push('Allergies : ' + ci.allergies.map((k) => ALLERGIES[k]).join(', '));
+        return t.length ? el('p', { class: 'meta contact-info', text: t.join(' · ') }) : null; })(),
       armedButton('Retirer', 'Confirmer ?', () => dropContact(c, 'Contact retiré'))])));
   }
 
@@ -970,6 +1075,7 @@
         addressBlock(r, () => openRestoForm('perso', r)),
         infosBlock(r),
         guestsBlock(s),
+        resumeLine(s.id),
         el('div', { class: 'sortie-actions' },
           el('button', { type: 'button', class: 'btn', text: '+ Inviter', onclick: () => openInvite(s) }),
           el('a', { class: 'link', href: mapsUrl(r), target: '_blank', rel: 'noopener noreferrer', text: 'Itinéraire' }),
@@ -1115,7 +1221,7 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('ov').hidden) closeSheet(); });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadPrivate()]).then(render, () => {});
+    if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadInfos(), loadPrivate()]).then(render, () => {});
   });
 
   /* ---------- démarrage ---------- */
