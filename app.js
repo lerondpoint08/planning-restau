@@ -1327,6 +1327,15 @@
     if (!document.hidden && S.user && S.ready) Promise.all([loadContacts(), loadInvites(), loadInfos(), loadGroupes(), loadPrivate()]).then(render, () => {});
   });
 
+  async function shareApp() {
+    const url = location.origin + location.pathname;
+    const data = { title: 'Planning Restau', text: 'Planning Restau : garde tes restos repérés sur TikTok et Insta et planifie tes sorties avec tes amis.', url };
+    if (navigator.share) { try { await navigator.share(data); } catch (e) { /* annulé */ } return; }
+    try { await navigator.clipboard.writeText(url); toast('Lien copié'); }
+    catch (e) { openSheet('Lien de l’appli', el('input', { value: url, readonly: true, 'aria-label': 'Lien de l’appli', onfocus: (ev) => ev.target.select() })); }
+  }
+  $('shareApp').addEventListener('click', shareApp);
+
   /* ---------- démarrage ---------- */
   try {
     const q = new URLSearchParams(location.search).get('ami');
