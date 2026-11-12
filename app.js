@@ -505,6 +505,26 @@
     });
     openSheet('Mon profil de sortie', form);
   }
+  function rdvCard() {
+    const mine = S.sorties.filter((s) => s.date >= todayKey()).map((s) => {
+      const r = byMine(s.mon_resto_id);
+      const avec = S.guests.filter((g) => g.sortie_id === s.id && g.statut !== 'non').map((g) => g.pseudo);
+      return { date: s.date, creneau: s.creneau, nom: r ? r.nom : 'Resto retiré', lieu: r ? addressLine(r) : '', avec: avec.length ? 'avec ' + avec.join(', ') : '' };
+    });
+    const inv = invAccepted().map((x) => ({ date: x.date, creneau: x.creneau, nom: x.nom, lieu: [x.adresse, x.ville].filter(Boolean).join(', '), avec: 'invité par ' + x.organisateur }));
+    const all = mine.concat(inv).sort(sortSorties);
+    const pend = invPending().length;
+    return el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Mes prochains rendez-vous' }),
+      ...(all.length ? all.slice(0, 5).map((x) => el('div', { class: 'rdv' },
+        el('p', { class: 'rdv-when', text: cap(fmtShort.format(parseISO(x.date))) + ' · ' + ((CRENEAUX[x.creneau] || {}).label || x.creneau) }),
+        el('p', { class: 'rdv-what', text: x.nom }),
+        x.lieu ? el('p', { class: 'meta', text: x.lieu }) : null,
+        x.avec ? el('p', { class: 'meta', text: x.avec }) : null))
+        : [el('p', { class: 'note', text: 'Aucun rendez-vous à venir. Planifie une sortie depuis le Planning.' })]),
+      all.length > 5 ? el('p', { class: 'meta', text: '+ ' + (all.length - 5) + ' autre(s) dans le Planning' }) : null,
+      pend ? el('p', { class: 'meta', text: pend + ' invitation(s) en attente de ta réponse.' }) : null,
+      el('div', { class: 'actions' }, el('button', { type: 'button', class: 'btn', text: 'Voir le planning', onclick: () => setTab('plan') })));
+  }
   function infosCard() {
     const i = S.infos, bits = [];
     if (i) {
@@ -679,7 +699,7 @@
           el('button', { type: 'button', class: 'btn', text: 'S’inscrire', onclick: () => openAuth('signup') }))));
       return;
     }
-    box.append(infosCard());
+    box.append(rdvCard(), infosCard());
     if (!S.profil) {
       box.append(el('div', { class: 'card' }, el('h3', { class: 'card-name', text: 'Choisis ton pseudo' }),
         el('p', { class: 'note', text: 'C’est le nom que tes contacts verront. Tu en as besoin pour envoyer ou recevoir des demandes.' }),

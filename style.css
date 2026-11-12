@@ -246,3 +246,8 @@ fieldset.field { border: 0; padding: 0; margin: 0; min-width: 0; }
 .opt.partage { align-items: flex-start; }
 
 .linkbtn { background: none; border: 0; padding: 8px 4px; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+
+.rdv { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.rdv p { margin: 0; }
+.rdv-when { font-size: 13px; font-weight: 600; color: var(--accent); }
+.rdv-what { font-weight: 600; }
