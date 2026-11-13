@@ -111,7 +111,7 @@
     catalogue: [], top: [], createurs: [], loves: new Set(),
     mine: [], sorties: [],
     tab: 'decouvrir', sub: 'restos', statut: 'atester', q: '', cuisine: '', cq: '', ccuisine: '',
-    planView: 'semaine', weekOffset: 0, newsOffset: 0, groupes: [], infos: null, cinfos: [], resumes: {}, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
+    planView: 'semaine', weekOffset: 0, newsOffset: 0, actus: [], actuFilter: '', groupes: [], infos: null, cinfos: [], resumes: {}, invitations: [], guests: [], profil: null, contacts: [], invite: '', idees: [], ideeSort: 'top', ideeFilter: '', realAdmin: false, preview: false
   };
   try {
     const t = localStorage.getItem('pr-tab'); if (t === 'plan' || t === 'liste' || t === 'decouvrir') S.tab = t;
@@ -159,7 +159,7 @@
     if (!r.error) S.idees = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes), auteur: noms.get(x.id) || '' }));
   }
   async function refresh() {
-    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites(), loadInfos(), loadGroupes()]); S.loadError = false; }
+    try { await Promise.all([loadPublic(), loadPrivate(), loadIdees(), loadContacts(), loadInvites(), loadInfos(), loadGroupes(), loadActus()]); S.loadError = false; }
     catch (e) { console.error(e); S.loadError = true; }
     S.ready = true; render(); handleInvite();
   }
@@ -272,6 +272,78 @@
       closeSheet(); toast('Avis envoyé, merci');
     });
     openSheet('Donner un avis', form, 'textarea');
+  }
+
+  /* ---------- actualités ---------- */
+  const ACTU_APPLIS = ['Planning Restau', 'Brocante', 'Autre'];
+  const actuVu = () => { try { return localStorage.getItem('pr-actus-vu') || ''; } catch (e) { return ''; } };
+  const actuNewest = () => S.actus.filter((a) => new Date(a.publie_le) <= new Date()).reduce((m, a) => (a.publie_le > m ? a.publie_le : m), '');
+  async function loadActus() {
+    const r = await sb.rpc('actus_liste');
+    if (!r.error) S.actus = (r.data || []).map((x) => ({ ...x, votes: Number(x.votes) }));
+  }
+  async function toggleActuVote(a) {
+    if (needLogin('Connecte-toi pour aimer une actu.')) return;
+    const on = !a.mon_vote; a.mon_vote = on; a.votes += on ? 1 : -1; renderActus();
+    const r = on ? await sb.from('actus_votes').insert({ actu_id: a.id }) : await sb.from('actus_votes').delete().eq('actu_id', a.id).eq('user_id', S.user.id);
+    if (r.error && !/duplicate/i.test(r.error.message || '')) { toast('Action impossible'); await loadActus(); renderActus(); }
+  }
+  async function actuPin(a) {
+    const r = await sb.from('actus').update({ epingle: !a.epingle }).eq('id', a.id);
+    if (r.error) { toast('Action impossible'); return; }
+    a.epingle = !a.epingle; renderActus(); toast(a.epingle ? 'Épinglée en haut' : 'Désépinglée');
+  }
+  async function actuRemove(a) {
+    const r = await sb.from('actus').delete().eq('id', a.id);
+    if (r.error) { toast('Suppression impossible'); return; }
+    S.actus = S.actus.filter((x) => x.id !== a.id); renderActus(); toast('Actu supprimée');
+  }
+  function openActuForm(a) {
+    if (!S.isAdmin) return;
+    const err = el('p', { class: 'err', role: 'alert' });
+    const applis = ACTU_APPLIS.includes(a && a.appli) || !a ? ACTU_APPLIS : [a.appli].concat(ACTU_APPLIS);
+    const appli = el('select', { name: 'appli' }, applis.map((x) => el('option', { value: x, text: x, selected: !!a && x === a.appli })));
+    const titre = inp('titre', { req: true, min: 3, max: 80, value: a ? a.titre : '', ph: 'Ex. Nouvelle fonction : les groupes' });
+    const texte = el('textarea', { name: 'texte', rows: '6', maxlength: '1500', required: true, placeholder: 'Raconte la nouveauté en quelques lignes' }); texte.value = a ? a.texte : '';
+    const jour = inp('jour', { type: 'date', req: true, value: a ? iso(new Date(a.publie_le)) : todayKey() });
+    const epingle = el('input', { type: 'checkbox', name: 'epingle', checked: !!(a && a.epingle) });
+    const form = el('form', {}, field('Application', appli), field('Titre', titre), field('Texte', texte), field('Date de publication (dans le futur = programmée)', jour),
+      el('label', { class: 'opt' }, epingle, el('span', { text: 'Épingler en haut' })), err, el('button', { type: 'submit', class: 'btn primary big', text: a ? 'Enregistrer' : 'Publier' }));
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const d = parseISO(jour.value), now = new Date();
+      const quand = iso(d) === todayKey() ? now : new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0);
+      const row = { appli: appli.value, titre: titre.value.trim(), texte: texte.value.trim(), publie_le: quand.toISOString(), epingle: epingle.checked };
+      const r = a ? await sb.from('actus').update(row).eq('id', a.id) : await sb.from('actus').insert(row);
+      if (r.error) { err.textContent = 'Enregistrement impossible (titre 3 à 80 caractères, texte 3 à 1500).'; return; }
+      closeSheet(); toast(a ? 'Actu modifiée' : 'Actu publiée'); await loadActus(); renderActus(); render();
+    });
+    openSheet(a ? 'Modifier l’actu' : 'Nouvelle actu', form, 'input[name="titre"]');
+  }
+  function actuCard(a) {
+    const futur = new Date(a.publie_le) > new Date();
+    return el('article', { class: 'card actu' },
+      el('div', { class: 'badges' },
+        el('span', { class: 'badge', text: a.appli }),
+        a.epingle ? el('span', { class: 'badge ex', text: 'Épinglée' }) : null,
+        futur ? el('span', { class: 'badge ex', text: 'Programmée' }) : null,
+        el('span', { class: 'meta', text: new Date(a.publie_le).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) })),
+      el('div', { class: 'card-top' }, el('h3', { class: 'card-name', text: a.titre }),
+        el('button', { type: 'button', class: 'btn vote', 'aria-pressed': String(!!a.mon_vote), 'aria-label': 'J’aime cette actu', text: (a.mon_vote ? '♥' : '♡') + (a.votes ? ' ' + a.votes : ''), onclick: () => toggleActuVote(a) })),
+      el('p', { class: 'note actu-text', text: a.texte }),
+      S.isAdmin ? el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'btn ghost', text: 'Modifier', onclick: () => openActuForm(a) }),
+        el('button', { type: 'button', class: 'btn ghost', text: a.epingle ? 'Désépingler' : 'Épingler', onclick: () => actuPin(a) }),
+        armedButton('Supprimer', 'Confirmer ?', () => actuRemove(a))) : null);
+  }
+  function renderActus() {
+    const chips = $('actuChips'); chips.replaceChildren();
+    const applis = [...new Set(S.actus.map((a) => a.appli))];
+    if (applis.length > 1) [['', 'Toutes']].concat(applis.map((x) => [x, x])).forEach(([v, l]) => chips.append(el('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.actuFilter === v), text: l, onclick: () => { S.actuFilter = v; renderActus(); } })));
+    const rows = S.actus.filter((a) => !S.actuFilter || a.appli === S.actuFilter)
+      .sort((x, y) => (y.epingle - x.epingle) || (new Date(y.publie_le) - new Date(x.publie_le)));
+    $('actuOut').replaceChildren(...(rows.length ? rows.map(actuCard) : [el('p', { class: 'meta', text: 'Pas encore d’actualité.' })]));
+    const n = actuNewest(); if (n) { try { localStorage.setItem('pr-actus-vu', n); } catch (e) { /* ignoré */ } }
   }
 
   /* ---------- idées d’amélioration ---------- */
@@ -1289,15 +1361,15 @@
     $('sub-restos').setAttribute('aria-pressed', String(S.sub === 'restos')); $('sub-createurs').setAttribute('aria-pressed', String(S.sub === 'createurs'));
     $('previewBar').hidden = !(S.realAdmin && S.preview);
     $('tab-admin').hidden = !S.isAdmin; $('tab-news').hidden = !S.isAdmin; if (!S.isAdmin && (S.tab === 'admin' || S.tab === 'news')) S.tab = 'decouvrir';
-    ['decouvrir', 'liste', 'plan', 'idees', 'contacts', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
-    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees'; $('view-contacts').hidden = S.tab !== 'contacts'; $('tab-plan').textContent = invPending().length ? 'Planning (' + invPending().length + ')' : 'Planning'; $('tab-contacts').textContent = nbRecues() ? 'Contacts (' + nbRecues() + ')' : 'Contacts';
+    ['decouvrir', 'liste', 'plan', 'idees', 'actus', 'contacts', 'news', 'admin'].forEach((t) => { $('tab-' + t).setAttribute('aria-selected', String(S.tab === t)); });
+    $('view-decouvrir').hidden = S.tab !== 'decouvrir'; $('view-liste').hidden = S.tab !== 'liste'; $('view-plan').hidden = S.tab !== 'plan'; $('view-admin').hidden = S.tab !== 'admin'; $('view-news').hidden = S.tab !== 'news'; $('view-idees').hidden = S.tab !== 'idees'; $('view-contacts').hidden = S.tab !== 'contacts'; $('view-actus').hidden = S.tab !== 'actus'; $('tab-actus').textContent = S.tab !== 'actus' && actuNewest() > actuVu() ? 'Actus •' : 'Actus'; $('tab-plan').textContent = invPending().length ? 'Planning (' + invPending().length + ')' : 'Planning'; $('tab-contacts').textContent = nbRecues() ? 'Contacts (' + nbRecues() + ')' : 'Contacts';
     $('d-restos').hidden = S.sub !== 'restos'; $('d-createurs').hidden = S.sub !== 'createurs';
     $('welcomeSignup').hidden = !!S.user;
     $('welcome').hidden = !(S.ready && !S.loadError && !welcomeSeen() && (!S.user || !S.mine.length));
     const cr = myCreateur();
-    const fabMode = (S.tab === 'admin' || S.tab === 'news' || S.tab === 'contacts') ? '' : S.tab === 'idees' ? 'idee' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
+    const fabMode = (S.tab === 'actus') ? (S.isAdmin ? 'actu' : '') : (S.tab === 'admin' || S.tab === 'news' || S.tab === 'contacts') ? '' : S.tab === 'idees' ? 'idee' : S.tab === 'plan' ? 'plan' : S.tab === 'liste' ? 'liste' : (S.sub === 'restos' ? (S.isAdmin ? 'cat' : '') : (cr && cr.verifie ? 'item' : ''));
     $('fab').hidden = !fabMode; $('fab').dataset.mode = fabMode;
-    $('fabLabel').textContent = { idee: 'Proposer une idée', plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
+    $('fabLabel').textContent = { actu: 'Publier une actu', idee: 'Proposer une idée', plan: 'Planifier', liste: 'Ajouter un resto', cat: 'Ajouter au catalogue', item: 'Ajouter à ma liste' }[fabMode] || '';
     $('summary').textContent = !S.ready ? 'Chargement…' : S.loadError ? 'Connexion impossible pour le moment'
       : S.user ? nAT + ' à tester · ' + nUp + (nUp > 1 ? ' sorties' : ' sortie') + ' à venir'
       : S.catalogue.filter((c) => !c.masque).length + ' restos à découvrir';
@@ -1305,7 +1377,7 @@
   function render() {
     renderUser(); renderChrome();
     if (S.tab === 'decouvrir') { if (S.sub === 'restos') renderCatalogue(); else renderCreators(); }
-    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else if (S.tab === 'idees') renderIdees(); else if (S.tab === 'contacts') renderContacts(); else renderPlan();
+    else if (S.tab === 'liste') renderMine(); else if (S.tab === 'admin') renderAdmin(); else if (S.tab === 'news') renderNews(); else if (S.tab === 'idees') renderIdees(); else if (S.tab === 'contacts') renderContacts(); else if (S.tab === 'actus') renderActus(); else renderPlan();
   }
   function setTab(t) { S.tab = t; try { localStorage.setItem('pr-tab', t); } catch (e) { /* ignoré */ } render(); window.scrollTo(0, 0); }
 
@@ -1320,6 +1392,7 @@
   $('tab-news').addEventListener('click', () => setTab('news'));
   $('tab-idees').addEventListener('click', () => setTab('idees'));
   $('tab-contacts').addEventListener('click', () => setTab('contacts'));
+  $('tab-actus').addEventListener('click', () => setTab('actus'));
   $('seg-idees').addEventListener('click', (e) => { const b = e.target.closest('button[data-isort]'); if (b) { S.ideeSort = b.dataset.isort; renderIdees(); } });
   $('nw-prev').addEventListener('click', () => { S.newsOffset -= 1; render(); });
   $('nw-next').addEventListener('click', () => { if (S.newsOffset < 0) { S.newsOffset += 1; render(); } });
@@ -1337,7 +1410,7 @@
   $('fab').addEventListener('click', () => {
     const m = $('fab').dataset.mode;
     if (m === 'plan') openPlan({}); else if (m === 'liste') openRestoForm('perso'); else if (m === 'cat') openRestoForm('catalogue');
-    else if (m === 'idee') openIdeeForm(); else if (m === 'item') { const c = myCreateur(); if (c) openItemForm(c); }
+    else if (m === 'actu') openActuForm(); else if (m === 'idee') openIdeeForm(); else if (m === 'item') { const c = myCreateur(); if (c) openItemForm(c); }
   });
   $('sheetClose').addEventListener('click', closeSheet);
   $('ov').addEventListener('click', (e) => { if (e.target === $('ov')) closeSheet(); });
